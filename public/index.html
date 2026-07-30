@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFL Fantasy Control Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script>
+        // Apply the saved theme before first paint to avoid a flash of the wrong mode.
+        (function () {
+            var saved = localStorage.getItem("nfl_theme") || "dark";
+            document.documentElement.setAttribute("data-theme", saved);
+        })();
+    </script>
+</head>
+<body>
+    <!-- Score Bug: persistent session switcher + live stat readout -->
+    <header class="scorebug">
+        <div class="scorebug-left">
+            <span class="rec-dot" aria-hidden="true" title="Dashboard connected"></span>
+            <button class="session-pill" id="session-trigger" aria-haspopup="listbox" aria-expanded="false" onclick="toggleSessionMenu()">
+                <span class="session-dot" id="session-trigger-dot"></span>
+                <span id="session-trigger-name">Loading session…</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="session-menu hidden" id="session-menu" role="listbox">
+                <div id="session-menu-list"></div>
+                <div class="field-divider session-menu-divider"></div>
+                <form class="session-create-form" id="session-create-form">
+                    <input type="text" id="session-name-input" placeholder="New session name" autocomplete="off" required>
+                    <button type="submit">Add</button>
+                </form>
+            </div>
+        </div>
+        <div class="scorebug-right">
+            <div class="scorebug-stat">
+                <span class="num" id="bug-actions">0</span>
+                <span class="label">Plays</span>
+            </div>
+            <div class="scorebug-stat">
+                <span class="num" id="bug-cache">0</span>
+                <span class="label">Cache Saves</span>
+            </div>
+            <button class="icon-btn" id="theme-toggle" onclick="toggleTheme()" aria-label="Switch color theme">
+                <span id="theme-icon">🌙</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="app-shell">
+        <!-- Play Sheet: workflow launch controls -->
+        <aside class="playsheet">
+            <div class="brand">
+                <h2>Fantasy HQ</h2>
+                <span>DeepSeek R1 Local</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" id="nav-actions" onclick="switchTab('actions')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                    Action History
+                </a>
+                <a href="#" class="nav-item" id="nav-syslogs" onclick="switchTab('syslogs')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    API Cache &amp; System Log
+                </a>
+            </nav>
+
+            <div class="field-divider"></div>
+
+            <div>
+                <div class="playsheet-section-title">Call a Play</div>
+
+                <button class="play-card" id="btn-optimizer" style="--play-color: var(--pos-rb)" onclick="triggerLineupOptimizer()">
+                    <span class="play-card-icon">🏈</span>
+                    <span>
+                        <span class="play-card-title" style="display:block">Set Lineup</span>
+                        <span class="play-card-desc">Evaluate this week's roster against real stats &amp; injury data, then set your optimal starters.</span>
+                    </span>
+                </button>
+
+                <button class="play-card" id="btn-draft" style="--play-color: var(--pos-wr)" onclick="triggerDraftAssistant()">
+                    <span class="play-card-icon">📋</span>
+                    <span>
+                        <span class="play-card-title" style="display:block">Start Live Draft</span>
+                        <span class="play-card-desc">Scan the ESPN draft room and get DeepSeek's pick recommendation.</span>
+                    </span>
+                </button>
+
+                <button class="play-card" id="btn-trade" style="--play-color: var(--pos-te)" onclick="triggerTradeAnalyzer()">
+                    <span class="play-card-icon">🔁</span>
+                    <span>
+                        <span class="play-card-title" style="display:block">Review Trade Offers</span>
+                        <span class="play-card-desc">Check pending trades and get an accept / decline recommendation.</span>
+                    </span>
+                </button>
+            </div>
+
+            <div class="playsheet-footer">
+                <div class="field-divider" style="margin-bottom: 0.85rem;"></div>
+                <p>Every recommendation, prompt, and raw model response is logged to the active session below.</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-title">
+                    <h1 id="page-heading">Action History</h1>
+                    <p id="page-subheading">Recommendations, prompts sent, and automated ESPN execution logs.</p>
+                </div>
+                <button class="btn" onclick="refreshActiveTab()">Refresh</button>
+            </header>
+
+            <div id="toast-banner" class="toast-banner hidden">
+                <div class="spinner"></div>
+                <span id="toast-message">Running DeepSeek analysis…</span>
+            </div>
+
+            <section class="metrics-grid">
+                <div class="stat-plate" style="--plate-color: var(--pos-rb)">
+                    <span class="label">Total Plays Logged</span>
+                    <span class="value" id="stat-total-actions">0</span>
+                </div>
+                <div class="stat-plate" style="--plate-color: var(--pos-wr)">
+                    <span class="label">API Cache Saves</span>
+                    <span class="value" id="stat-cache-hits">0</span>
+                </div>
+                <div class="stat-plate" style="--plate-color: var(--accent)">
+                    <span class="label">Local Engine</span>
+                    <span class="value small" id="stat-model-name">DeepSeek R1</span>
+                </div>
+            </section>
+
+            <section class="controls-bar">
+                <div class="search-box">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                    <input type="text" id="search-input" placeholder="Search player, trade, rationale, or prompt…" onkeyup="filterCurrentView()">
+                </div>
+                <div class="filter-group">
+                    <label for="filter-status">Filter:</label>
+                    <select id="filter-status" onchange="filterCurrentView()">
+                        <option value="ALL">All entries</option>
+                        <option value="SUCCESS">Success / hits</option>
+                        <option value="SIMULATED_FALLBACK">Simulated / fallback</option>
+                    </select>
+                </div>
+            </section>
+
+            <section class="table-container">
+                <table class="data-table">
+                    <thead id="table-head">
+                        <tr>
+                            <th>ID &amp; Date</th>
+                            <th>Week</th>
+                            <th>Action</th>
+                            <th>Players / Output</th>
+                            <th>Rationale</th>
+                            <th>Status</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table-body">
+                        <tr>
+                            <td colspan="7" class="loading-state">Loading history…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        </main>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detail-modal" class="modal-backdrop hidden" onclick="closeModal(event)">
+        <div class="modal-card" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modal-title">Action Detail</h3>
+                <button class="close-btn" onclick="closeModal()" aria-label="Close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-section">
+                    <h4>Rationale</h4>
+                    <p id="modal-rationale" class="rationale-text"></p>
+                </div>
+                <div class="modal-section">
+                    <h4>Players / Output</h4>
+                    <div class="roster-pills">
+                        <div id="modal-starters-pills"></div>
+                        <div id="modal-bench-pills"></div>
+                    </div>
+                </div>
+                <div class="modal-section">
+                    <h4>Prompt Sent to DeepSeek</h4>
+                    <pre><code id="modal-prompt-sent"></code></pre>
+                </div>
+                <div class="modal-section">
+                    <h4>Raw Model Response</h4>
+                    <pre><code id="modal-raw-json"></code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
