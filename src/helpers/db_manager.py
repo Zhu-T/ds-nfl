@@ -171,6 +171,15 @@ def get_db_connection(session_id: str = None):
     return conn
 
 
+def _ensure_columns(cursor, table: str, column_defs: dict):
+    """Add any columns in column_defs ({name: SQL type}) missing from an existing table."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in cursor.fetchall()}
+    for name, sql_type in column_defs.items():
+        if name not in existing:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+
+
 def init_db(session_id: str = None):
     """Initialize SQLite database schemas for Action Logs, System Activity, and API Cache."""
     conn = get_db_connection(session_id)
@@ -213,6 +222,74 @@ def init_db(session_id: str = None):
             ttl_seconds INTEGER
         )
     """)
+
+    # 4. Suggestions Table (Individual actionable items proposed by an action_log
+    #    run, e.g. one "START Josh Allen" per lineup run. The user accepts or
+    #    declines each one; only ACCEPTED, executable suggestions ever trigger
+    #    a Playwright action.)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_log_id INTEGER NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            suggestion_type TEXT,
+            player TEXT,
+            detail_json TEXT,
+            status TEXT DEFAULT 'PENDING'
+        )
+    """)
+
+    # 5. League Settings (Single row per session — this session's league format
+    #    & roster rules, fetched from ESPN and fed to DeepSeek for VORP/scarcity
+    #    reasoning that actually matches how the league is scored/structured.)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS league_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            league_format TEXT,
+            roster_settings TEXT,
+            raw_json TEXT,
+            draft_order_json TEXT,
+            draft_type TEXT,
+            fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # 6. Chat Messages (Free-form Q&A with DeepSeek — see chat_client.py. Each
+    #    assistant message records its tool_trace so lookups it made along the
+    #    way stay visible/auditable, same spirit as prompt_sent/raw_model_response
+    #    on action_logs.)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            role TEXT,
+            content TEXT,
+            tool_trace_json TEXT
+        )
+    """)
+
+    # 7. ESPN Session (Single row per session — this session's ESPN league id,
+    #    team id, and espn_s2/SWID cookies. Cookies can arrive two ways: typed
+    #    in manually via the settings form, or harvested via a Playwright login
+    #    window (see espn_client.harvest_espn_cookies_via_browser()). Kept
+    #    session-scoped and out of .env on purpose — different sessions can be
+    #    different leagues/teams, and a shared .env shouldn't accumulate
+    #    personal login cookies from ad-hoc browser logins.)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS espn_session (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            league_id TEXT,
+            team_id TEXT,
+            espn_s2 TEXT,
+            swid TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Migrate any pre-existing db files (created before a column existed) in place.
+    _ensure_columns(cursor, "league_settings", {"draft_order_json": "TEXT", "draft_type": "TEXT"})
+    _ensure_columns(cursor, "action_logs", {"prompt_sent": "TEXT", "raw_model_response": "TEXT"})
+    _ensure_columns(cursor, "espn_session", {"league_id": "TEXT", "team_id": "TEXT"})
 
     conn.commit()
     conn.close()
@@ -262,6 +339,170 @@ def log_action(week: int, action_type: str, starters: list, bench: list, rationa
     return inserted_id
 
 
+def update_action_status(action_log_id: int, status: str, session_id: str = None):
+    """Update the aggregate status of an action_log row (e.g. once its suggestions have been reviewed/executed)."""
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE action_logs SET status = ? WHERE id = ?", (status, action_log_id))
+    conn.commit()
+    conn.close()
+
+
+def create_suggestions(action_log_id: int, suggestions: list, session_id: str = None) -> list:
+    """
+    Record a batch of individual, acceptable/declinable suggestions produced by an
+    action_log run. Each suggestion dict: {"type": str, "player": str, "detail": dict}.
+    Returns the inserted suggestion ids.
+    """
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    inserted_ids = []
+    for s in suggestions:
+        cursor.execute("""
+            INSERT INTO suggestions (action_log_id, suggestion_type, player, detail_json, status)
+            VALUES (?, ?, ?, ?, 'PENDING')
+        """, (action_log_id, s.get("type"), s.get("player"), json.dumps(s.get("detail") or {})))
+        inserted_ids.append(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return inserted_ids
+
+
+def _row_to_suggestion(row) -> dict:
+    item = dict(row)
+    try:
+        item["detail"] = json.loads(item.pop("detail_json") or "{}")
+    except Exception:
+        item["detail"] = {}
+    return item
+
+
+def get_suggestions_for_action(action_log_id: int, session_id: str = None) -> list:
+    """Retrieve all suggestions tied to a single action_log run."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM suggestions WHERE action_log_id = ? ORDER BY id ASC", (action_log_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [_row_to_suggestion(r) for r in rows]
+
+
+def get_suggestion(suggestion_id: int, session_id: str = None):
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM suggestions WHERE id = ?", (suggestion_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _row_to_suggestion(row) if row else None
+
+
+def update_suggestion_status(suggestion_id: int, status: str, session_id: str = None) -> dict:
+    """Move a suggestion to ACCEPTED / DECLINED / EXECUTED / EXECUTION_FAILED."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE suggestions SET status = ? WHERE id = ?", (status, suggestion_id))
+    conn.commit()
+    conn.close()
+    log_system_event("SUGGESTION_STATUS_CHANGED", f"Suggestion #{suggestion_id} -> {status}", {"suggestion_id": suggestion_id, "status": status}, session_id=session_id)
+    return get_suggestion(suggestion_id, session_id=session_id)
+
+
+def get_espn_settings(session_id: str = None):
+    """Retrieve this session's saved ESPN connection settings (league id / team id / cookies), or None."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM espn_session WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_espn_settings(league_id: str = None, team_id: str = None, espn_s2: str = None, swid: str = None, session_id: str = None) -> dict:
+    """
+    Upsert this session's ESPN connection settings. Only overwrites fields
+    that are explicitly provided (non-None) — the settings form may submit
+    only league_id/team_id, and the Playwright cookie harvest only ever knows
+    espn_s2/swid, so neither should clobber what the other already saved.
+    """
+    init_db(session_id)
+    existing = get_espn_settings(session_id=session_id) or {}
+    merged = {
+        "league_id": league_id if league_id is not None else existing.get("league_id"),
+        "team_id": team_id if team_id is not None else existing.get("team_id"),
+        "espn_s2": espn_s2 if espn_s2 is not None else existing.get("espn_s2"),
+        "swid": swid if swid is not None else existing.get("swid"),
+    }
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO espn_session (id, league_id, team_id, espn_s2, swid, updated_at)
+        VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            league_id = excluded.league_id,
+            team_id = excluded.team_id,
+            espn_s2 = excluded.espn_s2,
+            swid = excluded.swid,
+            updated_at = CURRENT_TIMESTAMP
+    """, (merged["league_id"], merged["team_id"], merged["espn_s2"], merged["swid"]))
+    conn.commit()
+    conn.close()
+    log_system_event("ESPN_SETTINGS_SAVED", "Updated ESPN connection settings for this session", {"fields_updated": [k for k, v in {"league_id": league_id, "team_id": team_id, "espn_s2": espn_s2, "swid": swid}.items() if v is not None]}, session_id=session_id)
+    return merged
+
+
+def save_league_settings(league_format: str, roster_settings: str, raw: dict = None,
+                          draft_order: list = None, draft_type: str = None, session_id: str = None):
+    """
+    Upsert this session's league/draft settings (single row per session db).
+    draft_order/draft_type are only ever set by the draft assistant (see
+    espn_client.fetch_espn_league_settings) — league_format/roster_settings are
+    reused by lineup/trade prompts too.
+    """
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO league_settings (id, league_format, roster_settings, raw_json, draft_order_json, draft_type, fetched_at)
+        VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            league_format = excluded.league_format,
+            roster_settings = excluded.roster_settings,
+            raw_json = excluded.raw_json,
+            draft_order_json = excluded.draft_order_json,
+            draft_type = excluded.draft_type,
+            fetched_at = CURRENT_TIMESTAMP
+    """, (league_format, roster_settings, json.dumps(raw or {}), json.dumps(draft_order or []), draft_type))
+    conn.commit()
+    conn.close()
+
+
+def get_league_settings(session_id: str = None):
+    """Retrieve this session's saved league/draft settings, or None if never fetched."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM league_settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    item = dict(row)
+    try:
+        item["draft_order_json"] = json.loads(item["draft_order_json"]) if item["draft_order_json"] else []
+    except Exception:
+        item["draft_order_json"] = []
+    try:
+        item["raw_json"] = json.loads(item["raw_json"]) if item["raw_json"] else {}
+    except Exception:
+        item["raw_json"] = {}
+    return item
+
+
 def fetch_cached_api_request(url: str, cookies: dict = None, ttl_seconds: int = 300, session_id: str = None) -> dict:
     """
     Checks SQLite cache for API responses.
@@ -306,6 +547,41 @@ def fetch_cached_api_request(url: str, cookies: dict = None, ttl_seconds: int = 
         conn.close()
         log_system_event("API_FETCH_ERROR", f"Error requesting ESPN API: {e}", {"url": url, "error": str(e)}, session_id=session_id)
         raise e
+
+
+def save_chat_message(role: str, content: str, tool_trace: list = None, session_id: str = None) -> int:
+    """Record one chat turn ('user' or 'assistant')."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO chat_messages (role, content, tool_trace_json)
+        VALUES (?, ?, ?)
+    """, (role, content, json.dumps(tool_trace or [])))
+    conn.commit()
+    inserted_id = cursor.lastrowid
+    conn.close()
+    return inserted_id
+
+
+def get_chat_messages(limit: int = 200, session_id: str = None) -> list:
+    """Retrieve this session's chat history, oldest first."""
+    init_db(session_id)
+    conn = get_db_connection(session_id)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chat_messages ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item["tool_trace_json"] = json.loads(item["tool_trace_json"]) if item["tool_trace_json"] else []
+        except Exception:
+            item["tool_trace_json"] = []
+        result.append(item)
+    return list(reversed(result))
 
 
 def get_all_logs(limit=100, session_id: str = None):

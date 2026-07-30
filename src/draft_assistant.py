@@ -20,6 +20,6 @@ if __name__ == "__main__":
     print("  Powered by Local DeepSeek R1")
     print("==================================================")
     
-    # Run draft assistant (set auto_click_draft=True to automatically click Draft in ESPN UI)
-    # Uses the default session (see dashboard "Sessions" switcher / db_manager.set_default_session)
-    run_live_draft_assistant(auto_click_draft=False)
+    # Logs a single draft-pick suggestion for review; nothing is drafted until
+    # it's accepted (see dashboard "Sessions" switcher / db_manager.set_default_session)
+    run_live_draft_assistant()

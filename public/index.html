@@ -34,6 +34,11 @@
                     <button type="submit">Add</button>
                 </form>
             </div>
+            <div class="field-divider vertical" aria-hidden="true"></div>
+            <div class="league-info-inline" id="league-info-inline" title="League settings">
+                <span class="league-info-line" id="league-format-value">Run Start Live Draft to fetch league settings</span>
+                <span class="league-info-line dim" id="league-roster-value"></span>
+            </div>
         </div>
         <div class="scorebug-right">
             <div class="scorebug-stat">
@@ -67,6 +72,10 @@
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                     API Cache &amp; System Log
                 </a>
+                <a href="#" class="nav-item" id="nav-chat" onclick="switchTab('chat')">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                    Ask DeepSeek
+                </a>
             </nav>
 
             <div class="field-divider"></div>
@@ -74,19 +83,25 @@
             <div>
                 <div class="playsheet-section-title">Call a Play</div>
 
-                <button class="play-card" id="btn-optimizer" style="--play-color: var(--pos-rb)" onclick="triggerLineupOptimizer()">
-                    <span class="play-card-icon">🏈</span>
-                    <span>
-                        <span class="play-card-title" style="display:block">Set Lineup</span>
-                        <span class="play-card-desc">Evaluate this week's roster against real stats &amp; injury data, then set your optimal starters.</span>
-                    </span>
-                </button>
+                <div class="mode-toggle" role="group" aria-label="Execution mode">
+                    <button type="button" class="mode-btn active" id="mode-suggest" onclick="setAutoMode(false)">Suggest</button>
+                    <button type="button" class="mode-btn" id="mode-auto" onclick="setAutoMode(true)">Auto</button>
+                </div>
+                <p class="mode-hint" id="mode-hint">Review and accept each suggestion before anything runs on ESPN.</p>
 
                 <button class="play-card" id="btn-draft" style="--play-color: var(--pos-wr)" onclick="triggerDraftAssistant()">
                     <span class="play-card-icon">📋</span>
                     <span>
                         <span class="play-card-title" style="display:block">Start Live Draft</span>
                         <span class="play-card-desc">Scan the ESPN draft room and get DeepSeek's pick recommendation.</span>
+                    </span>
+                </button>
+
+                <button class="play-card" id="btn-optimizer" style="--play-color: var(--pos-rb)" onclick="triggerLineupOptimizer()">
+                    <span class="play-card-icon">🏈</span>
+                    <span>
+                        <span class="play-card-title" style="display:block">Set Lineup</span>
+                        <span class="play-card-desc">Evaluate this week's roster against real stats &amp; injury data, then set your optimal starters.</span>
                     </span>
                 </button>
 
@@ -98,6 +113,32 @@
                     </span>
                 </button>
             </div>
+
+            <div class="field-divider" style="margin: 1rem 0 0.85rem;"></div>
+
+            <details class="espn-settings-panel" id="espn-settings-panel">
+                <summary class="playsheet-section-title">ESPN Connection</summary>
+                <form id="espn-settings-form" class="espn-settings-form">
+                    <label>
+                        <span>League ID</span>
+                        <input type="text" id="espn-league-id-input" placeholder="League ID" autocomplete="off">
+                    </label>
+                    <label>
+                        <span>Team ID</span>
+                        <input type="text" id="espn-team-id-input" placeholder="Team ID" autocomplete="off">
+                    </label>
+                    <label>
+                        <span>espn_s2 cookie</span>
+                        <input type="password" id="espn-s2-input" placeholder="espn_s2 cookie" autocomplete="off">
+                    </label>
+                    <label>
+                        <span>SWID cookie</span>
+                        <input type="password" id="espn-swid-input" placeholder="SWID cookie" autocomplete="off">
+                    </label>
+                    <button type="submit" class="btn btn-apply">Save</button>
+                    <p class="espn-settings-hint" id="espn-settings-hint">Leave a field blank to keep its current value. Cookies can also be left blank entirely — a login window opens automatically the first time ESPN needs them.</p>
+                </form>
+            </details>
 
             <div class="playsheet-footer">
                 <div class="field-divider" style="margin-bottom: 0.85rem;"></div>
@@ -120,55 +161,71 @@
                 <span id="toast-message">Running DeepSeek analysis…</span>
             </div>
 
-            <section class="metrics-grid">
-                <div class="stat-plate" style="--plate-color: var(--pos-rb)">
-                    <span class="label">Total Plays Logged</span>
-                    <span class="value" id="stat-total-actions">0</span>
-                </div>
-                <div class="stat-plate" style="--plate-color: var(--pos-wr)">
-                    <span class="label">API Cache Saves</span>
-                    <span class="value" id="stat-cache-hits">0</span>
-                </div>
-                <div class="stat-plate" style="--plate-color: var(--accent)">
-                    <span class="label">Local Engine</span>
-                    <span class="value small" id="stat-model-name">DeepSeek R1</span>
-                </div>
-            </section>
+            <div id="history-view">
+                <section class="metrics-grid">
+                    <div class="stat-plate" style="--plate-color: var(--pos-rb)">
+                        <span class="label">Total Plays Logged</span>
+                        <span class="value" id="stat-total-actions">0</span>
+                    </div>
+                    <div class="stat-plate" style="--plate-color: var(--pos-wr)">
+                        <span class="label">API Cache Saves</span>
+                        <span class="value" id="stat-cache-hits">0</span>
+                    </div>
+                    <div class="stat-plate" style="--plate-color: var(--accent)">
+                        <span class="label">Local Engine</span>
+                        <span class="value small" id="stat-model-name">DeepSeek R1</span>
+                    </div>
+                </section>
 
-            <section class="controls-bar">
-                <div class="search-box">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                    <input type="text" id="search-input" placeholder="Search player, trade, rationale, or prompt…" onkeyup="filterCurrentView()">
-                </div>
-                <div class="filter-group">
-                    <label for="filter-status">Filter:</label>
-                    <select id="filter-status" onchange="filterCurrentView()">
-                        <option value="ALL">All entries</option>
-                        <option value="SUCCESS">Success / hits</option>
-                        <option value="SIMULATED_FALLBACK">Simulated / fallback</option>
-                    </select>
-                </div>
-            </section>
+                <section class="controls-bar">
+                    <div class="search-box">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        <input type="text" id="search-input" placeholder="Search player, trade, rationale, or prompt…" onkeyup="filterCurrentView()">
+                    </div>
+                    <div class="filter-group">
+                        <label for="filter-status">Filter:</label>
+                        <select id="filter-status" onchange="filterCurrentView()">
+                            <option value="ALL">All entries</option>
+                            <option value="PENDING_REVIEW">Needs review</option>
+                            <option value="EXECUTED">Executed</option>
+                            <option value="DECLINED">Declined</option>
+                            <option value="EXECUTION_FAILED">Failed</option>
+                            <option value="SIMULATED_FALLBACK">Simulated / fallback</option>
+                        </select>
+                    </div>
+                </section>
 
-            <section class="table-container">
-                <table class="data-table">
-                    <thead id="table-head">
-                        <tr>
-                            <th>ID &amp; Date</th>
-                            <th>Week</th>
-                            <th>Action</th>
-                            <th>Players / Output</th>
-                            <th>Rationale</th>
-                            <th>Status</th>
-                            <th>Detail</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logs-table-body">
-                        <tr>
-                            <td colspan="7" class="loading-state">Loading history…</td>
-                        </tr>
-                    </tbody>
-                </table>
+                <section class="table-container">
+                    <table class="data-table">
+                        <thead id="table-head">
+                            <tr>
+                                <th>ID &amp; Date</th>
+                                <th>Week</th>
+                                <th>Action</th>
+                                <th>Players / Output</th>
+                                <th>Rationale</th>
+                                <th>Status</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-table-body">
+                            <tr>
+                                <td colspan="7" class="loading-state">Loading history…</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            </div>
+
+            <!-- Ask DeepSeek: free-form Q&A, with real player lookups available to the model -->
+            <section class="chat-panel hidden" id="chat-panel">
+                <div class="chat-messages" id="chat-messages">
+                    <p class="empty-state">Ask about a player, matchup, or your league settings — DeepSeek can look up real stats to answer.</p>
+                </div>
+                <form class="chat-input-row" id="chat-form">
+                    <input type="text" id="chat-input" placeholder="e.g. How has Josh Allen performed the last few seasons?" autocomplete="off">
+                    <button type="submit" class="btn btn-apply">Ask</button>
+                </form>
             </section>
         </main>
     </div>
@@ -191,6 +248,12 @@
                         <div id="modal-starters-pills"></div>
                         <div id="modal-bench-pills"></div>
                     </div>
+                </div>
+                <div class="modal-section">
+                    <h4>Suggestions</h4>
+                    <div id="modal-suggestions-list" class="suggestions-list"></div>
+                    <p id="modal-suggestions-empty" class="hint-text hidden">No individual suggestions were recorded for this action.</p>
+                    <button class="btn btn-apply hidden" id="modal-apply-btn" onclick="applyAcceptedSuggestions()">Apply Accepted</button>
                 </div>
                 <div class="modal-section">
                     <h4>Prompt Sent to DeepSeek</h4>

@@ -66,6 +66,10 @@
     padding: 0;
 }
 
+.hidden {
+    display: none !important;
+}
+
 html {
     color-scheme: dark;
 }
@@ -100,6 +104,12 @@ a {
     opacity: 0.7;
 }
 
+.field-divider.vertical {
+    height: 22px;
+    width: 1px;
+    background-image: repeating-linear-gradient(180deg, var(--border) 0, var(--border) 2px, transparent 2px, transparent 6px);
+}
+
 /* ==========================================================================
    Score bug — persistent broadcast-style strip: session switcher + live stats
    ========================================================================== */
@@ -122,6 +132,8 @@ a {
     align-items: center;
     gap: 0.75rem;
     position: relative;
+    flex: 1;
+    min-width: 0;
 }
 
 .rec-dot {
@@ -425,6 +437,76 @@ select:focus-visible {
     margin-bottom: 0.7rem;
 }
 
+/* Suggest / Auto execution mode toggle */
+.mode-toggle {
+    display: flex;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    margin-bottom: 0.5rem;
+}
+
+.mode-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.4rem 0.5rem;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mode-btn.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.mode-btn.auto-active {
+    background: var(--accent);
+    color: var(--accent-ink);
+}
+
+.mode-hint {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+    margin-bottom: 1rem;
+}
+
+.mode-hint.warn {
+    color: var(--accent);
+}
+
+.league-info-inline {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.1rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.league-info-line {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.league-info-line.dim {
+    font-size: 0.66rem;
+    color: var(--text-dim);
+}
+
 .play-card {
     display: flex;
     align-items: flex-start;
@@ -477,6 +559,69 @@ select:focus-visible {
     font-size: 0.76rem;
     color: var(--text-muted);
     line-height: 1.4;
+}
+
+.espn-settings-panel summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.espn-settings-panel summary::-webkit-details-marker {
+    display: none;
+}
+
+.espn-settings-panel summary::after {
+    content: "+";
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+}
+
+.espn-settings-panel[open] summary::after {
+    content: "\2212";
+}
+
+.espn-settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.6rem;
+}
+
+.espn-settings-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.espn-settings-form input {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.8rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+}
+
+.espn-settings-form input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.espn-settings-form .btn {
+    margin-top: 0.2rem;
+}
+
+.espn-settings-hint {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    line-height: 1.45;
+    margin-top: 0.3rem;
 }
 
 .playsheet-footer {
@@ -718,6 +863,7 @@ select:focus-visible {
 .data-table tbody tr.row-success { border-left-color: var(--status-success); }
 .data-table tbody tr.row-warn { border-left-color: var(--status-warn); }
 .data-table tbody tr.row-fail { border-left-color: var(--status-fail); }
+.data-table tbody tr.row-neutral { border-left-color: var(--text-dim); }
 
 .data-table tbody tr:hover {
     background: var(--surface-2);
@@ -762,7 +908,96 @@ select:focus-visible {
 .badge-success { background: color-mix(in srgb, var(--status-success) 16%, transparent); color: var(--status-success); border: 1px solid color-mix(in srgb, var(--status-success) 35%, transparent); }
 .badge-simulated { background: color-mix(in srgb, var(--status-warn) 16%, transparent); color: var(--status-warn); border: 1px solid color-mix(in srgb, var(--status-warn) 35%, transparent); }
 .badge-failed { background: color-mix(in srgb, var(--status-fail) 16%, transparent); color: var(--status-fail); border: 1px solid color-mix(in srgb, var(--status-fail) 35%, transparent); }
+.badge-neutral { background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border); }
 .badge-week { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* ==========================================================================
+   Suggestions review (inside the detail modal)
+   ========================================================================== */
+
+.suggestions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+
+.suggestion-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0.6rem 0.75rem;
+}
+
+.suggestion-info {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.suggestion-type {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.suggestion-player {
+    font-size: 0.85rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggestion-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.decision-btn {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    padding: 0.3rem 0.6rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.decision-btn.accept:hover { border-color: var(--status-success); color: var(--status-success); }
+.decision-btn.decline:hover { border-color: var(--status-fail); color: var(--status-fail); }
+
+.decision-btn.accept.selected { background: color-mix(in srgb, var(--status-success) 18%, transparent); border-color: var(--status-success); color: var(--status-success); }
+.decision-btn.decline.selected { background: color-mix(in srgb, var(--status-fail) 18%, transparent); border-color: var(--status-fail); color: var(--status-fail); }
+
+.hint-text {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+}
+
+.btn-apply {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    font-weight: 700;
+    margin-top: 0.3rem;
+}
+
+.btn-apply:hover {
+    filter: brightness(1.08);
+}
 
 .player-tag {
     background: var(--surface-2);
@@ -875,6 +1110,104 @@ pre {
 }
 
 /* ==========================================================================
+   Ask DeepSeek (chat panel)
+   ========================================================================== */
+
+.chat-panel {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 260px);
+    min-height: 420px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.chat-messages .empty-state {
+    margin: auto;
+    max-width: 340px;
+    text-align: center;
+}
+
+.chat-bubble-row {
+    display: flex;
+}
+
+.chat-bubble-row.user {
+    justify-content: flex-end;
+}
+
+.chat-bubble {
+    max-width: 72%;
+    padding: 0.65rem 0.9rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.88rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.chat-bubble-row.user .chat-bubble {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-bottom-right-radius: 4px;
+}
+
+.chat-bubble-row.assistant .chat-bubble {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+}
+
+.chat-bubble-row.assistant.thinking .chat-bubble {
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+.chat-tool-trace {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+}
+
+.chat-input-row {
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.9rem;
+    border-top: 1px solid var(--border);
+    background: var(--surface-2);
+}
+
+.chat-input-row input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius-md);
+    font-size: 0.88rem;
+    font-family: var(--font-body);
+}
+
+.chat-input-row input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* ==========================================================================
    Responsive
    ========================================================================== */
 
@@ -893,6 +1226,20 @@ pre {
         flex-wrap: wrap;
     }
 
+    .scorebug-left {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+
+    .league-info-inline {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .field-divider.vertical {
+        display: none;
+    }
+
     .main-content {
         padding: 1.25rem;
     }
@@ -900,5 +1247,13 @@ pre {
     .top-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .chat-panel {
+        height: calc(100vh - 340px);
+    }
+
+    .chat-bubble {
+        max-width: 88%;
     }
 }
