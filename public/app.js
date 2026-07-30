@@ -137,11 +137,11 @@ async function loadEspnSettings() {
         const settings = await res.json();
 
         leagueInput.value = settings.league_id || "";
-        leagueInput.placeholder = settings.league_id ? "" : "From .env";
+        leagueInput.placeholder = settings.league_id ? "" : "";
         teamInput.value = settings.team_id || "";
-        teamInput.placeholder = settings.team_id ? "" : "From .env";
-        s2Input.placeholder = settings.espn_s2_set ? "Already saved — leave blank to keep" : "From .env (or auto-captured on login)";
-        swidInput.placeholder = settings.swid_set ? "Already saved — leave blank to keep" : "From .env (or auto-captured on login)";
+        teamInput.placeholder = settings.team_id ? "" : "";
+        s2Input.placeholder = settings.espn_s2_set ? "Already saved — leave blank to keep" : "Auto-captured on login";
+        swidInput.placeholder = settings.swid_set ? "Already saved — leave blank to keep" : "Auto-captured on login";
     } catch (err) {
         document.getElementById("espn-settings-hint").innerText = `Couldn't load current settings: ${err.message}`;
     }
