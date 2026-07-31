@@ -182,14 +182,17 @@ function renderSessionSwitcher() {
         const isActive = s.id === activeSessionId;
         const isDefault = s.id === defaultSessionId;
         return `
-            <button type="button" class="session-menu-item ${isActive ? 'active' : ''}" onclick="selectSession('${s.id}')">
+            <div class="session-menu-item ${isActive ? 'active' : ''}" role="option" aria-selected="${isActive}" tabindex="0"
+                 onclick="selectSession('${s.id}')"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectSession('${s.id}');}"
+            >
                 <span class="session-dot"></span>
                 <span class="session-item-name">${escapeHtml(s.name)}</span>
                 ${isDefault
-                    ? `<span class="default-star">Default</span>`
-                    : `<button type="button" class="set-default-btn" onclick="event.stopPropagation(); setDefaultSession('${s.id}')">Set default</button>`
+                    ? `<span class="default-indicator default-star">Default</span>`
+                    : `<button type="button" class="default-indicator set-default-btn" onclick="event.stopPropagation(); setDefaultSession('${s.id}')">Set default</button>`
                 }
-            </button>
+            </div>
         `;
     }).join("");
 }

@@ -175,7 +175,9 @@ a {
 .btn:focus-visible,
 .icon-btn:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+.session-menu-item:focus-visible,
+.default-indicator:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
@@ -245,28 +247,39 @@ select:focus-visible {
     flex: 1;
 }
 
-.session-menu-item .default-star {
-    font-size: 0.7rem;
-    color: var(--accent);
+/* Both the "Default" badge and the "Set default" action share this shape/slot
+   so a row looks the same size whether or not it's the default — only the
+   coloring changes to signal state. */
+.session-menu-item .default-indicator {
+    flex-shrink: 0;
     font-family: var(--font-mono);
+    font-size: 0.66rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    line-height: 1;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.session-menu-item .default-star {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .session-menu-item .set-default-btn {
-    font-size: 0.7rem;
     color: var(--text-dim);
     background: none;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.15rem 0.4rem;
+    border-color: var(--border);
     cursor: pointer;
-    font-family: var(--font-body);
 }
 
 .session-menu-item .set-default-btn:hover {
     color: var(--accent);
-    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .session-menu-divider {

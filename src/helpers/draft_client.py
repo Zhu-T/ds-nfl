@@ -21,6 +21,23 @@ from src.helpers.espn_client import (
 from src.helpers.prompt_loader import load_guidance
 
 
+def _is_espn_page_not_found(page) -> bool:
+    """
+    Detect ESPN's own "Page not found" response for the draft room — this
+    happens when no draft is currently scheduled/active for the league (ESPN
+    doesn't render a draft room page outside of an actual draft window), or
+    when the league id is wrong. Checked explicitly so a dead page fails
+    loudly instead of silently falling through to mock demo data.
+    """
+    try:
+        title = (page.title() or "").lower()
+        if "not found" in title or "error" in title:
+            return True
+        return page.get_by_text("Page Not Found", exact=False).first.is_visible(timeout=1000)
+    except Exception:
+        return False
+
+
 def analyze_draft_pick(available_players: list, current_roster: list, current_pick: int, league_settings_block: str = "", session_id: str = None) -> dict:
     """Prompt DeepSeek to recommend the best available player based on VORP and team needs."""
     guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "draft_guidance.md")
@@ -76,6 +93,20 @@ def run_live_draft_assistant(draft_url: str = None, session_id: str = None, auto
         page.wait_for_timeout(5000)
 
         ensure_espn_login(page, session_id=session_id)
+
+        if _is_espn_page_not_found(page):
+            logging.error(f"ESPN returned 'Page not found' for the draft room ({draft_url}).")
+            log_system_event(
+                "ESPN_DRAFT_ROOM_NOT_FOUND",
+                "ESPN's draft room page couldn't be found — there's likely no active or scheduled draft for this league right now.",
+                {"draft_url": draft_url},
+                session_id=session_id
+            )
+            browser.close()
+            raise RuntimeError(
+                "ESPN couldn't find a draft room at that URL — there's likely no active or scheduled draft for this "
+                "league right now. Double-check your League ID in ESPN Connection, and try again once your draft has started."
+            )
 
         # Refresh the ESPN-id/gsis-id crosswalk so player matching stays ID-based
         # (chat's lookups reuse whatever's persisted here rather than refreshing it).
@@ -179,6 +210,17 @@ def draft_player_via_browser(player_name: str, draft_url: str = None, session_id
         page.wait_for_timeout(5000)
 
         ensure_espn_login(page, session_id=session_id)
+
+        if _is_espn_page_not_found(page):
+            logging.error(f"ESPN returned 'Page not found' for the draft room ({draft_url}) — can't draft {player_name}.")
+            log_system_event(
+                "ESPN_DRAFT_ROOM_NOT_FOUND",
+                f"ESPN's draft room page couldn't be found while trying to draft {player_name}.",
+                {"draft_url": draft_url, "player": player_name},
+                session_id=session_id
+            )
+            browser.close()
+            raise RuntimeError("ESPN couldn't find a draft room at that URL — the draft may have ended or not started.")
 
         clicked = False
         try:
