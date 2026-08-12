@@ -396,7 +396,7 @@ def _click_table_draft(page, player_name: str) -> bool:
 
 _SKILL_POS = ("QB", "RB", "WR", "TE", "K", "D/ST")
 _RB_STRATEGIES = ("Hero RB", "Robust RB", "Zero RB", "Hyper-Fragile RB")
-_PICK_DEADLINE_SECONDS = 55
+_PICK_DEADLINE_SECONDS = 30
 
 
 def _merge_taken(scraped: list, session_id: str = None) -> list:
