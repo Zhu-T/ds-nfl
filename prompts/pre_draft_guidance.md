@@ -51,9 +51,9 @@
 
 Rankings and Autopick order should follow the saved round-1 pick slot (early / middle / late). 12-team bands are slots 1–4 / 5–8 / 9–12; other sizes use the same thirds.
 
-- **Early (1–4):** Rank an undisputed high-ceiling RB or WR first. Then a long run of the opposite position (Hero RB/WR) through the next several ranks. Do not reach at what will be the round 2/3 turn — the wait to round 4 is very long.
-- **Middle (5–8):** Rank best player available at the top. Stay flexible (do not force Zero RB). If elite QB/TE value appears in the round 3–4 range after a skill-position run, it can outrank a lesser RB/WR. Prefer high-floor RB/WR for balanced depth.
-- **Late & the turn (9–12):** Rank in complementary pairs (two of a premium tier together) because snake picks are back-to-back then a long wait. Ceiling over safety. Autopick may open Hyper-Fragile (three elite RBs immediately) or Zero RB (no RB in the first five) — pick one; do not mix.
+- **Early (1–4):** Rank an undisputed high-ceiling RB or WR first. Then a long run of the opposite position (Hero RB/WR) through the next several ranks. Do not reach at what will be the round 2/3 turn — the wait to round 4 is very long. Hero RB: one elite RB, then WRs, cheap RBs later; take an elite QB **or** elite TE early-mid, not both.
+- **Middle (5–8):** Rank best player available at the top. Stay flexible (do not force Zero RB). If elite QB/TE value appears in the round 3–4 range after a skill-position run, it can outrank a lesser RB/WR. Prefer high-floor RB/WR for balanced depth. Robust RB (two early workhorse RBs): wait on QB/TE and catch up on WR in the middle ranks.
+- **Late & the turn (9–12):** Rank in complementary pairs (two of a premium tier together) because snake picks are back-to-back then a long wait. Ceiling over safety. Autopick may open Hyper-Fragile (three elite RBs immediately, then heavy WR, punt QB/TE late) or Zero RB (no RB in the first five, lock elite TE and a top QB) — pick one; do not mix.
 
 ## Data for this decision
 

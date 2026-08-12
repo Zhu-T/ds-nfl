@@ -45,14 +45,33 @@ Read the taken-player list (and the board snapshot counts) after every pick. The
 
 ## RB strategy
 
-Start your draft by playing as flexibly as possible, letting the board come to you rather than forcing a pre-determined build. Once your pick slot, the flow of the early rounds, and your initial roster dictate a clear path, commit to one of the following RB approaches. Stay with it unless a massive positional run forces a necessary pivot. Name your chosen approach in `rb_strategy`.
+Start the draft as flexibly as possible. Let the board come to you rather than forcing a pre-determined build. Once pick slot, the flow of the early rounds, and the initial roster dictate a clear path, commit to one of the following RB approaches **including its QB/TE pairing**. Stay with it unless a massive positional run forces a necessary pivot. Name the chosen approach in `rb_strategy` (`Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`).
 
-- **Hero RB:** Draft one elite running back early, load up on top-tier wide receivers, then grab cheap upside rushers later. Natural fit for early slots after a superstar RB (or WR, then one RB).
-- **Robust RB:** Secure heavy-workload running backs early (typically two in the first few rounds) to dominate the position.
-- **Zero RB:** Skip running backs in the first five rounds and stockpile elite pass-catchers (WR, then TE). Better from the turn than from the middle.
-- **Hyper-Fragile RB:** From the late turn, use back-to-back picks to lock three elite RBs immediately. High ceiling, injury-fragile.
+### Hero RB
 
-If a prior strategy is provided from earlier picks this draft, continue it unless the taken list or slot guidelines make a pivot clearly better. When you pivot, say so in `rationale`.
+Draft one elite running back early, load up on top-tier wide receivers, then grab cheap upside rushers later. Natural fit for early slots after a superstar RB (or WR, then one RB).
+
+- **QB/TE:** Use that flexibility to grab an elite QB **or** an elite TE in the early-to-mid rounds. Do not draft both early — keep a strong WR foundation.
+
+### Robust RB
+
+Secure heavy-workload running backs early (typically two in the first few rounds) to dominate the position.
+
+- **QB/TE:** Early capital went to the backfield, so wait on QB and TE until later rounds. Use the middle rounds to catch up aggressively on WR depth.
+
+### Zero RB
+
+Skip running backs in the first five rounds and stockpile elite pass-catchers (WR, then TE). Better from the turn than from the middle.
+
+- **QB/TE:** Capitalize on the non-RB approach by locking an elite TE **and** a top-tier QB, maximizing positional scoring across the board.
+
+### Hyper-Fragile RB
+
+From the late turn, use early picks to lock three elite RBs immediately. High weekly ceiling, highly vulnerable to injuries.
+
+- **QB/TE:** Three early RBs means you must heavily overcompensate at WR. Punt QB and TE to the late rounds (high-upside sleepers or stream those positions).
+
+If a prior strategy is provided from earlier picks this draft, continue it (and its QB/TE pairing) unless the taken list or slot guidelines make a pivot clearly better. When you pivot, say so in `rationale`.
 
 Do not reach for a need if the Autodraft suggestion is clearly higher value. Scarcity, slot, and strategy inform the pick; they do not require a worse player.
 
@@ -70,4 +89,4 @@ You will receive:
 **Reply format** — JSON object only:
 `{"player": "Player Name", "pos": "RB", "use_autodraft": false, "rb_strategy": "Hero RB", "rationale": "string"}`
 
-Copy a player `name` exactly. Set `use_autodraft` true only when `player` is the Autodraft suggestion. `rb_strategy` must be `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`.
+Copy a player `name` exactly. Set `use_autodraft` true only when `player` is the Autodraft suggestion. `rb_strategy` must be `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`. Follow that approach's QB/TE pairing.

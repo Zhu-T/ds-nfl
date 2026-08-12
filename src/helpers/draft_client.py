@@ -731,7 +731,7 @@ def _ask_pick(
     prompt = f"""
 {guidance}
 
-DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Choose Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB and stick with it unless a run or the slot guidelines make a pivot clearly better.
+DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Stay flexible early; once the board dictates a path, commit to Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB (including that approach's QB/TE pairing) and stick with it unless a massive run forces a pivot.
 
 ---
 
