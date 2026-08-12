@@ -45,7 +45,7 @@ Read the taken-player list (and the board snapshot counts) after every pick. The
 
 ## RB strategy
 
-Choose one RB approach from the pick slot, the board, and this roster, then stay with it unless a run forces a clear pivot. Name it in `rb_strategy`.
+Start your draft by playing as flexibly as possible, letting the board come to you rather than forcing a pre-determined build. Once your pick slot, the flow of the early rounds, and your initial roster dictate a clear path, commit to one of the following RB approaches. Stay with it unless a massive positional run forces a necessary pivot. Name your chosen approach in `rb_strategy`.
 
 - **Hero RB:** Draft one elite running back early, load up on top-tier wide receivers, then grab cheap upside rushers later. Natural fit for early slots after a superstar RB (or WR, then one RB).
 - **Robust RB:** Secure heavy-workload running backs early (typically two in the first few rounds) to dominate the position.
