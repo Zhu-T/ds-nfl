@@ -198,6 +198,7 @@ function renderSessionSwitcher() {
     document.getElementById("session-trigger-name").innerText = activeSession ? activeSession.name : "Select session";
 
     const list = document.getElementById("session-menu-list");
+    const canDelete = sessions.length > 1;
     list.innerHTML = sessions.map(s => {
         const isActive = s.id === activeSessionId;
         const isDefault = s.id === defaultSessionId;
@@ -208,10 +209,18 @@ function renderSessionSwitcher() {
             >
                 <span class="session-dot"></span>
                 <span class="session-item-name">${escapeHtml(s.name)}</span>
-                ${isDefault
-                    ? `<span class="default-indicator default-star">Default</span>`
-                    : `<button type="button" class="default-indicator set-default-btn" onclick="event.stopPropagation(); setDefaultSession('${s.id}')">Set default</button>`
-                }
+                <span class="session-item-actions">
+                    ${isDefault
+                        ? `<span class="default-indicator default-star">Default</span>`
+                        : `<button type="button" class="default-indicator set-default-btn" onclick="event.stopPropagation(); setDefaultSession('${s.id}')">Set default</button>`
+                    }
+                    ${canDelete
+                        ? `<button type="button" class="session-delete-btn" title="Delete session" aria-label="Delete ${escapeHtml(s.name)}" onclick="event.stopPropagation(); deleteSession('${s.id}')">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                           </button>`
+                        : ""
+                    }
+                </span>
             </div>
         `;
     }).join("");
@@ -255,6 +264,46 @@ async function setDefaultSession(sessionId) {
         }
     } catch (err) {
         showToast(`Couldn't set default session: ${err.message}`, false);
+    }
+}
+
+async function deleteSession(sessionId) {
+    const target = sessions.find(s => s.id === sessionId);
+    const label = target ? target.name : sessionId;
+    if (!confirm(`Delete session "${label}"? This permanently removes its history and cannot be undone.`)) {
+        return;
+    }
+    try {
+        const res = await fetch("/api/sessions/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await res.json();
+        if (data.status !== "success") throw new Error(data.message || "Couldn't delete session");
+
+        sessions = data.sessions || sessions.filter(s => s.id !== sessionId);
+        defaultSessionId = data.default_session_id || defaultSessionId;
+        if (activeSessionId === sessionId) {
+            activeSessionId = defaultSessionId || (sessions[0] && sessions[0].id) || null;
+            if (activeSessionId) {
+                localStorage.setItem("nfl_active_session", activeSessionId);
+            } else {
+                localStorage.removeItem("nfl_active_session");
+            }
+            refreshActiveTab();
+            loadLeagueSettings();
+            loadEspnSettings();
+            pollLiveDraftStatus();
+        }
+        renderSessionSwitcher();
+        if (data.warning) {
+            showToast(data.warning, false);
+        } else {
+            showToast(`Deleted session "${label}"`, true);
+        }
+    } catch (err) {
+        showToast(`Couldn't delete session: ${err.message}`, false);
     }
 }
 

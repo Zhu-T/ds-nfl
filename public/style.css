@@ -245,6 +245,17 @@ select:focus-visible,
 
 .session-menu-item .session-item-name {
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.session-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
 }
 
 /* Both the "Default" badge and the "Set default" action share this shape/slot
@@ -280,6 +291,26 @@ select:focus-visible,
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.session-menu-item .session-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-dim);
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.session-menu-item .session-delete-btn:hover {
+    color: #c45c5c;
+    background: color-mix(in srgb, #c45c5c 12%, transparent);
 }
 
 .session-menu-divider {

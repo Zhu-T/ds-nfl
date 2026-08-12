@@ -16,7 +16,7 @@ sys.path.insert(0, BASE_DIR)
 
 from src.helpers.db_manager import (
     load_env, get_all_logs, get_system_logs, seed_demo_data_if_empty,
-    list_sessions, create_session, set_default_session,
+    list_sessions, create_session, set_default_session, delete_session,
     get_suggestions_for_action, update_suggestion_status, get_league_settings,
     get_espn_settings, save_espn_settings,
 )
@@ -206,6 +206,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 body = self._read_json_body()
                 result = set_default_session(body.get("session_id", ""))
+                self._send_json(200, {"status": "success", **result})
+            except Exception as e:
+                self._send_json(400, {"status": "error", "message": str(e)})
+            return
+
+        # Delete a session (and its db file)
+        if parsed_path.path == "/api/sessions/delete":
+            try:
+                body = self._read_json_body()
+                result = delete_session(body.get("session_id", ""))
                 self._send_json(200, {"status": "success", **result})
             except Exception as e:
                 self._send_json(400, {"status": "error", "message": str(e)})

@@ -142,6 +142,49 @@ def set_default_session(session_id: str) -> dict:
     return {"default_session_id": session_id}
 
 
+def delete_session(session_id: str) -> dict:
+    """
+    Remove a session from the registry and delete its db file.
+    Cannot delete the last remaining session. If the deleted session was the
+    default (or the caller's active one), returns a replacement default_session_id.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("Session id is required")
+
+    meta = _load_sessions_meta()
+    sessions = meta.get("sessions") or []
+    match = next((s for s in sessions if s["id"] == session_id), None)
+    if not match:
+        raise ValueError(f"Unknown session id: {session_id}")
+    if len(sessions) <= 1:
+        raise ValueError("Cannot delete the last session")
+
+    meta["sessions"] = [s for s in sessions if s["id"] != session_id]
+    if meta.get("default_session_id") == session_id:
+        meta["default_session_id"] = meta["sessions"][0]["id"]
+    _save_sessions_meta(meta)
+
+    db_path = os.path.join(SESSIONS_DIR, match.get("filename") or f"{session_id}.db")
+    try:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+    except OSError as e:
+        # Meta is already updated; surface a soft warning via the message.
+        return {
+            "deleted_session_id": session_id,
+            "default_session_id": meta["default_session_id"],
+            "sessions": meta["sessions"],
+            "warning": f"Session removed but db file could not be deleted: {e}",
+        }
+
+    return {
+        "deleted_session_id": session_id,
+        "default_session_id": meta["default_session_id"],
+        "sessions": meta["sessions"],
+    }
+
+
 def _resolve_session(session_id: str = None) -> str:
     """Resolve a requested session id to a valid, existing session id."""
     meta = _load_sessions_meta()
