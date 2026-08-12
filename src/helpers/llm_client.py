@@ -8,41 +8,65 @@ from src.helpers.db_manager import log_system_event
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_RESULT_KEYS = {
+    "player", "recommended_player", "use_autodraft", "rb_strategy", "rationale",
+    "rankings", "players", "board", "tool", "starters", "text", "name",
+}
+
+
+def _looks_like_result(obj) -> bool:
+    if not isinstance(obj, dict) or not obj:
+        return False
+    keys = set(obj)
+    if keys & _RESULT_KEYS:
+        return True
+    for nested_key in ("decision", "pick", "recommendation", "result", "data"):
+        inner = obj.get(nested_key)
+        if isinstance(inner, dict) and (set(inner) & _RESULT_KEYS):
+            return True
+        if isinstance(inner, str) and inner.strip():
+            return True
+    return False
+
+
+def _iter_json_dicts(text: str):
+    if not text or not isinstance(text, str):
+        return
+    decoder = json.JSONDecoder()
+    i = 0
+    found = 0
+    n = len(text)
+    while i < n and found < 24:
+        start = text.find("{", i)
+        if start < 0:
+            return
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            i = start + 1
+            continue
+        if isinstance(obj, dict):
+            found += 1
+            yield obj
+        i = start + max(end, 1)
 
 
 def _extract_json_object(text: str):
-    """Parse a dict from model text (think tags, fences, or embedded JSON)."""
+    """Parse a dict from model text, preferring a decision-shaped object."""
     if text is None:
         return None
     if isinstance(text, dict):
         return text
     if not isinstance(text, str):
         return None
-    s = _THINK_RE.sub("", text).strip()
+    s = _THINK_RE.sub("\n", text).strip()
     if not s:
         return None
     s = _FENCE_RE.sub("", s).strip()
-    candidates = [s]
-    start = s.find("{")
-    end = s.rfind("}")
-    if start >= 0 and end > start:
-        candidates.append(s[start:end + 1])
-    for blob in candidates:
-        try:
-            obj = json.loads(blob)
-        except Exception:
-            obj = None
-            if blob.startswith("{"):
-                try:
-                    obj, _ = json.JSONDecoder().raw_decode(blob)
-                except Exception:
-                    obj = None
-        if isinstance(obj, dict):
+    candidates = list(_iter_json_dicts(s))
+    for obj in reversed(candidates):
+        if _looks_like_result(obj):
             return obj
-        if isinstance(obj, str):
-            nested = _extract_json_object(obj)
-            if nested:
-                return nested
     return None
 
 
@@ -54,13 +78,15 @@ def _parse_ollama_payload(res_data: dict):
         raw = res_data["message"].get("content")
     thinking = res_data.get("thinking") or ""
     if isinstance(raw, dict):
-        return raw, json.dumps(raw, ensure_ascii=False)
-    text = raw if isinstance(raw, str) else ""
-    parsed = _extract_json_object(text)
-    if not parsed and thinking:
-        parsed = _extract_json_object(thinking if isinstance(thinking, str) else "")
-    raw_text = text or (thinking if isinstance(thinking, str) else "")
-    return parsed or {}, raw_text
+        if _looks_like_result(raw):
+            return raw, json.dumps(raw, ensure_ascii=False)
+        raw_text = json.dumps(raw, ensure_ascii=False)
+    else:
+        raw_text = raw if isinstance(raw, str) else ""
+    think_text = thinking if isinstance(thinking, str) else ""
+    combined = "\n".join(t for t in (think_text, raw_text) if t)
+    parsed = _extract_json_object(combined)
+    return parsed or {}, combined
 
 
 def query_local_deepseek(prompt: str, session_id: str = None, timeout: int = 60) -> dict:
@@ -69,7 +95,6 @@ def query_local_deepseek(prompt: str, session_id: str = None, timeout: int = 60)
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "format": "json"
     }
     started = time.time()
     try:
@@ -78,18 +103,23 @@ def query_local_deepseek(prompt: str, session_id: str = None, timeout: int = 60)
         res_data = response.json()
         elapsed = time.time() - started
         parsed, raw_text = _parse_ollama_payload(res_data)
-        if not parsed:
-            snippet = (raw_text or "")[:400]
+        if not _looks_like_result(parsed):
+            snippet = (raw_text or "").replace("\n", " ")[:300]
             logging.warning(
-                f"DeepSeek ({OLLAMA_MODEL}) returned non-JSON or empty object after {elapsed:.1f}s"
+                f"DeepSeek ({OLLAMA_MODEL}) did not return a usable JSON decision after {elapsed:.1f}s"
                 + (f": {snippet}" if snippet else "")
             )
+            parsed = {}
         msg = f"DeepSeek ({OLLAMA_MODEL}) responded in {elapsed:.1f}s"
         logging.info(msg)
         log_system_event(
             "LLM_CALL_SUCCESS",
             msg,
-            {"model": OLLAMA_MODEL, "elapsed_seconds": round(elapsed, 2), "parsed_keys": list(parsed)[:12]},
+            {
+                "model": OLLAMA_MODEL,
+                "elapsed_seconds": round(elapsed, 2),
+                "parsed_keys": [str(k)[:80] for k in list(parsed)[:12]],
+            },
             session_id=session_id
         )
         return parsed

@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Optional
 
 from playwright.sync_api import sync_playwright
@@ -305,49 +306,50 @@ def _click_banner_draft(page) -> bool:
         return False
 
 
-_SEARCH_MATCH_JS = """(name) => {
+_NAME_MATCH_JS = """(a, b) => {
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
-  const target = norm(name);
-  if (!target) return false;
-  const words = target.split(" ").filter((w) => w.length > 1);
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const ta = na.split(" ").filter(Boolean);
+  const tb = nb.split(" ").filter(Boolean);
+  if (ta.length >= 2 && tb.length >= 2 && ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1]) return true;
+  return false;
+}"""
+
+_SEARCH_MATCH_JS = """(name) => {
+  const namesMatch = """ + _NAME_MATCH_JS + """;
   const btns = [...document.querySelectorAll("button.player--search--match")];
   const match = btns.find((b) => {
-    const t = norm(((b.querySelector(".playerinfo__playername") || b).innerText || ""));
-    return t === target || t.includes(target) || target.includes(t)
-      || (words.length && words.every((w) => t.includes(w)));
-  }) || btns[0];
+    const t = ((b.querySelector(".playerinfo__playername") || b).innerText || "");
+    return namesMatch(name, t);
+  });
   if (!match) return false;
   match.click();
   return true;
 }"""
 
 _TABLE_ROW_DRAFT_JS = """(name) => {
-  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+  const namesMatch = """ + _NAME_MATCH_JS + """;
   const isDraft = (b) => {
     const text = (b.innerText || "").replace(/\\s+/g, " ").trim();
     if (!/^DRAFT$/i.test(text)) return false;
     if (b.disabled || b.classList.contains("Button--drafted") || b.classList.contains("Button--disabled")) return false;
     return true;
   };
-  const target = norm(name);
-  const words = target.split(" ").filter((w) => w.length > 1);
   const nameEls = [...document.querySelectorAll(
     ".draft-players .public_fixedDataTable_bodyRow .playerinfo__playername, .draft-players .fixedDataTableRowLayout_main .playerinfo__playername"
   )].filter((el) => !el.closest(".player--search--matches, button.player--search--match"));
-  const matchEl = nameEls.find((el) => {
-    const t = norm(el.innerText);
-    return t === target || t.includes(target) || target.includes(t)
-      || (words.length && words.every((w) => t.includes(w)));
-  }) || (nameEls.length === 1 ? nameEls[0] : null);
+  const matchEl = nameEls.find((el) => namesMatch(name, el.innerText || ""));
   if (!matchEl) return false;
   const row = matchEl.closest(".public_fixedDataTable_bodyRow, .fixedDataTableRowLayout_main, .fixedDataTableRowLayout_rowWrapper");
   const rowBtn = row && [...row.querySelectorAll("button.action-btn, button.Button--draft")].find(isDraft);
-  if (rowBtn) { rowBtn.click(); return true; }
+  if (rowBtn) { rowBtn.click(); return "row"; }
   const y = matchEl.getBoundingClientRect().top;
   const aligned = [...document.querySelectorAll(".draft-players button.action-btn, .draft-players button.Button--draft")]
     .filter((b) => !b.closest(".pickArea, .player--search--matches") && isDraft(b))
     .find((b) => Math.abs(b.getBoundingClientRect().top - y) < 22);
-  if (aligned) { aligned.click(); return true; }
+  if (aligned) { aligned.click(); return "aligned"; }
   return false;
 }"""
 
@@ -367,40 +369,25 @@ def _search_and_select_player(page, player_name: str) -> bool:
     try:
         page.locator("button.player--search--match").first.wait_for(state="visible", timeout=2500)
     except Exception:
-        try:
-            field.press("Enter")
-            page.wait_for_timeout(500)
-        except Exception:
-            pass
         return False
     return bool(page.evaluate(_SEARCH_MATCH_JS, player_name))
 
 
 def _click_table_row_draft(page, player_name: str) -> bool:
-    """Click DRAFT on the available-players row (same slot as DRAFTED when taken)."""
-    loc = page.locator(
-        ".draft-players .public_fixedDataTable_bodyRow button.action-btn, "
-        ".draft-players .fixedDataTableRowLayout_main button.action-btn"
-    ).filter(has_text=re.compile(r"^\s*DRAFT\s*$", re.I))
-    count = loc.count()
-    for i in range(count):
-        btn = loc.nth(i)
-        try:
-            if btn.is_visible() and btn.is_enabled():
-                btn.click(timeout=2000)
-                return True
-        except Exception:
-            continue
+    """Click DRAFT only on the table row whose name matches player_name."""
     return bool(page.evaluate(_TABLE_ROW_DRAFT_JS, player_name))
 
 
 def _click_table_draft(page, player_name: str) -> bool:
     try:
-        _search_and_select_player(page, player_name)
-        page.wait_for_timeout(700)
+        selected = _search_and_select_player(page, player_name)
+        page.wait_for_timeout(700 if selected else 200)
         if _click_table_row_draft(page, player_name):
             return True
-        logging.warning(f"No enabled table DRAFT button for {player_name}")
+        logging.warning(
+            f"No name-matched table DRAFT button for {player_name}"
+            + ("" if selected else " (search match also failed)")
+        )
         return False
     except Exception as e:
         logging.warning(f"Table DRAFT click failed for {player_name}: {e}")
@@ -409,6 +396,7 @@ def _click_table_draft(page, player_name: str) -> bool:
 
 _SKILL_POS = ("QB", "RB", "WR", "TE", "K", "D/ST")
 _RB_STRATEGIES = ("Hero RB", "Robust RB", "Zero RB", "Hyper-Fragile RB")
+_PICK_DEADLINE_SECONDS = 55
 
 
 def _merge_taken(scraped: list, session_id: str = None) -> list:
@@ -699,6 +687,20 @@ def _name_already_taken(name: str, taken: list, my_team: list = None) -> str:
     return ""
 
 
+def _format_player_lines(players: list) -> str:
+    lines = []
+    for item in players or []:
+        if isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            pos = (item.get("pos") or "").strip()
+        else:
+            name, pos = str(item or "").strip(), ""
+        if not name:
+            continue
+        lines.append(f"{name} ({pos})" if pos else name)
+    return "\n".join(lines) if lines else "(none)"
+
+
 def _ask_pick(
     picked: list,
     my_team: list,
@@ -708,6 +710,7 @@ def _ask_pick(
     prior_strategy: str = "",
     rejected: list = None,
     blank_retry: bool = False,
+    timeout: int = 75,
 ):
     guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "live_draft_guidance.md")
     sug = suggestion if isinstance(suggestion, dict) else None
@@ -715,39 +718,30 @@ def _ask_pick(
     rejected_names = [n for n in (rejected or []) if n]
     rejected_block = ""
     if rejected_names:
-        rejected_block = f"""
-HARD CONSTRAINT: These players are already drafted. Do not name them. Pick a different player who is still available.
-{json.dumps(rejected_names, ensure_ascii=False)}
-"""
+        rejected_block = (
+            "ALREADY TAKEN — do not name these; pick someone else still available:\n"
+            + "\n".join(rejected_names)
+            + "\n"
+        )
     if blank_retry:
-        rejected_block += """
-HARD CONSTRAINT: Your previous reply had an empty "player". Set "player" to one real available name and put the why in "rationale". If unsure, use the Autodraft suggestion and set use_autodraft true.
-"""
+        rejected_block += (
+            'Your previous reply had an empty "player". '
+            "Name one real available player. If unsure, use the Autodraft suggestion and set use_autodraft true.\n"
+        )
     prompt = f"""
 {guidance}
 
 DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Choose Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB and stick with it unless a run or the slot guidelines make a pivot clearly better.
 
-DATA YOU WILL RECEIVE:
-1. LEAGUE SETTINGS — plain text with Format, Roster, and Draft Order (your slot and the turn).
-2. TAKEN PLAYERS — JSON array of {{name, pos}} already drafted by anyone.
-3. CURRENT ROSTER — JSON array of {{name, pos}} already on this team.
-4. AUTODRAFT SUGGESTION — JSON object {{name, pos}} or null.
-5. BOARD SNAPSHOT — taken/roster counts, your slot band, picks until next, turn-team rosters, remaining starter holes.
-6. PRIOR RB STRATEGY — from an earlier pick this draft, or none yet.
-
-REPLY FORMAT — JSON object only:
-{{"player": "Player Name", "pos": "RB", "use_autodraft": false, "rb_strategy": "Hero RB", "rationale": "string"}}
-
 ---
 
 {league_block}
 
-TAKEN PLAYERS:
-{json.dumps(picked, ensure_ascii=False)}
+TAKEN PLAYERS (off the board):
+{_format_player_lines(picked)}
 
 CURRENT ROSTER:
-{json.dumps(my_team, ensure_ascii=False)}
+{_format_player_lines(my_team)}
 
 AUTODRAFT SUGGESTION:
 {json.dumps(sug, ensure_ascii=False)}
@@ -758,8 +752,12 @@ BOARD SNAPSHOT:
 PRIOR RB STRATEGY:
 {prior_strategy or "none yet"}
 {rejected_block}
+Reply with one JSON object only, after any thinking. "player" must be a real available name, never blank:
+{{"player": "First Last", "pos": "RB", "use_autodraft": false, "rb_strategy": "Hero RB", "rationale": "short why"}}
 """
-    parsed = _coerce_pick_decision(query_local_deepseek(prompt, session_id=session_id, timeout=75) or {})
+    parsed = _coerce_pick_decision(
+        query_local_deepseek(prompt, session_id=session_id, timeout=max(1, int(timeout))) or {}
+    )
     return parsed, prompt.strip()
 
 
@@ -912,6 +910,8 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
                     continue
 
                 idle_rounds = 0
+                pick_started = time.monotonic()
+                pick_timed_out = False
                 if _autopick_is_on(page):
                     _ensure_autopick_off(page, attempts=4)
                 suggestion = state.get("autodraft_suggestion") or {}
@@ -930,6 +930,13 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
                 max_llm_tries = 3
                 for try_n in range(max_llm_tries):
                     if stop and stop.is_set():
+                        break
+                    remaining = _PICK_DEADLINE_SECONDS - (time.monotonic() - pick_started)
+                    if remaining < 3:
+                        pick_timed_out = True
+                        logging.warning(
+                            f"Live draft: {_PICK_DEADLINE_SECONDS}s pick budget exhausted; skipping this turn"
+                        )
                         break
                     if try_n > 0:
                         state = _scrape(page)
@@ -952,7 +959,14 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
                         prior_strategy=prior_strategy,
                         rejected=rejected,
                         blank_retry=blank_replies > 0,
+                        timeout=max(1, remaining - 0.5),
                     )
+                    if time.monotonic() - pick_started >= _PICK_DEADLINE_SECONDS:
+                        pick_timed_out = True
+                        logging.warning(
+                            f"Live draft: DeepSeek over {_PICK_DEADLINE_SECONDS}s; skipping this turn"
+                        )
+                        break
                     llm_player = _llm_player_name(decision)
                     hit = _name_already_taken(llm_player, taken, state["my_team"])
                     taken_attempts.append({
@@ -960,6 +974,7 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
                         "already_taken": bool(hit),
                         "blank": not bool(llm_player),
                         "matched_taken": hit,
+                        "parsed_keys": list(decision)[:12] if isinstance(decision, dict) else [],
                     })
                     if not llm_player:
                         blank_replies += 1
@@ -977,6 +992,53 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
                 if stop and stop.is_set():
                     _set_job(session_id, running=False, message="Stopped.")
                     break
+
+                if not pick_timed_out and (time.monotonic() - pick_started) >= _PICK_DEADLINE_SECONDS:
+                    pick_timed_out = True
+
+                if pick_timed_out:
+                    elapsed = time.monotonic() - pick_started
+                    _set_job(
+                        session_id,
+                        message="DeepSeek too slow — Autodraft will take this pick…",
+                    )
+                    log_action(
+                        week=0,
+                        action_type="LIVE_DRAFT_PICK",
+                        starters=[],
+                        bench=["timeout"],
+                        rationale=(
+                            f"Skipped: DeepSeek took {elapsed:.1f}s "
+                            f"(limit {_PICK_DEADLINE_SECONDS}s). Autodraft handles this pick."
+                        ),
+                        status="SKIPPED",
+                        prompt_sent=prompt_sent,
+                        raw_response=json.dumps({
+                            "timed_out": True,
+                            "elapsed_seconds": round(elapsed, 2),
+                            "deadline_seconds": _PICK_DEADLINE_SECONDS,
+                            "taken_attempts": taken_attempts,
+                            "autodraft_suggestion": suggestion,
+                        }, ensure_ascii=False),
+                        session_id=session_id,
+                    )
+                    log_system_event(
+                        "LIVE_DRAFT_PICK_TIMEOUT",
+                        f"Skipped pick after {elapsed:.1f}s; waiting for Autodraft",
+                        {"elapsed_seconds": round(elapsed, 2)},
+                        session_id=session_id,
+                    )
+                    while True:
+                        if stop and stop.is_set():
+                            break
+                        nxt = _scrape(page)
+                        if nxt.get("draft_complete") or not nxt.get("my_turn"):
+                            break
+                        page.wait_for_timeout(400)
+                    if stop and stop.is_set():
+                        _set_job(session_id, running=False, message="Stopped.")
+                        break
+                    continue
 
                 deepseek_player = llm_player or next(
                     (a.get("player") or "" for a in reversed(taken_attempts) if a.get("player")),
