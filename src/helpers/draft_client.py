@@ -608,15 +608,21 @@ def _board_snapshot(picked: list, my_team: list, session_id: str = None) -> dict
 
 
 def _normalize_rb_strategy(value) -> str:
+    """Return a committed RB approach, or '' while still Flexible / unnamed."""
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     lowered = text.lower()
+    if not lowered or lowered in (
+        "flexible", "none", "none yet", "n/a", "na", "wait", "tbd",
+        "uncommitted", "not yet", "undecided",
+    ):
+        return ""
     if "zero" in lowered:
         return "Zero RB"
     if "fragile" in lowered or "hyper" in lowered:
         return "Hyper-Fragile RB"
     if "robust" in lowered or "heavy" in lowered:
         return "Robust RB"
-    if "hero" in lowered:
+    if re.search(r"\bhero\b", lowered):
         return "Hero RB"
     return text if text in _RB_STRATEGIES else ""
 
@@ -731,7 +737,7 @@ def _ask_pick(
     prompt = f"""
 {guidance}
 
-DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Stay flexible early; once the board dictates a path, commit to Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB (including that approach's QB/TE pairing) and stick with it unless a massive run forces a pivot.
+DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Stay Flexible until the board makes a path clear — do not default to Hero RB or any other approach. Only then set rb_strategy to Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB (including that approach's QB/TE pairing).
 
 ---
 
@@ -750,10 +756,10 @@ BOARD SNAPSHOT:
 {json.dumps(snapshot, ensure_ascii=False)}
 
 PRIOR RB STRATEGY:
-{prior_strategy or "none yet"}
+{prior_strategy or "Flexible (none yet — do not invent Hero RB or any other approach)"}
 {rejected_block}
-Reply with one JSON object only, after any thinking. "player" must be a real available name, never blank:
-{{"player": "First Last", "pos": "RB", "use_autodraft": false, "rb_strategy": "Hero RB", "rationale": "short why"}}
+Reply with one JSON object only, after any thinking. "player" must be a real available name, never blank. rb_strategy must be "Flexible" until you actually commit:
+{{"player": "First Last", "pos": "WR", "use_autodraft": false, "rb_strategy": "Flexible", "rationale": "short why"}}
 """
     parsed = _coerce_pick_decision(
         query_local_deepseek(prompt, session_id=session_id, timeout=max(1, int(timeout))) or {}
@@ -1053,10 +1059,10 @@ def run_live_draft_loop(draft_url: str = None, session_id: str = None):
 
                 llm_use_auto = bool(decision.get("use_autodraft")) if isinstance(decision, dict) else False
                 llm_rationale = _llm_rationale(decision)
-                rb_strategy = _normalize_rb_strategy(
-                    (decision.get("rb_strategy") or decision.get("strategy") if isinstance(decision, dict) else "")
-                    or prior_strategy
+                named_strategy = _normalize_rb_strategy(
+                    (decision.get("rb_strategy") or decision.get("strategy")) if isinstance(decision, dict) else ""
                 )
+                rb_strategy = named_strategy or prior_strategy or ""
                 matched_autodraft = bool(sug_name and llm_player and _names_match(llm_player, sug_name))
                 if not llm_player and not sug_name:
                     logging.warning("Live draft: no player from DeepSeek and no Autodraft suggestion.")
