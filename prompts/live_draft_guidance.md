@@ -45,7 +45,12 @@ Read the taken-player list (and the board snapshot counts) after every pick. The
 
 ## RB strategy
 
-Start the draft Flexible. Let the board come to you — do **not** force a pre-determined build and do **not** default to Hero RB. Set `rb_strategy` to `Flexible` until pick slot, the flow of the early rounds, and the initial roster make a path clear. Only then commit to one of the following RB approaches **including its QB/TE pairing**. Stay with it unless a massive positional run forces a necessary pivot. When committed, `rb_strategy` is `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`.
+Start the draft Flexible. Let the board come to you — do **not** force a pre-determined build and do **not** default to Hero RB. On **every pick**, look at slot, taken players, this roster, and board trends, then set `rb_strategy` to one of:
+
+- `Flexible` — path is not clear yet (do not invent Hero RB or any other label just to fill the field)
+- `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB` — commit now, or pivot to this from a prior approach, **including that approach's QB/TE pairing**
+
+Prior strategy is a starting point, not a lock. Always decide whether to stay Flexible, commit, keep the current approach, or pivot. If you commit or pivot, say why in `rationale`.
 
 ### Hero RB
 
@@ -71,8 +76,6 @@ From the late turn, use early picks to lock three elite RBs immediately. High we
 
 - **QB/TE:** Three early RBs means you must heavily overcompensate at WR. Punt QB and TE to the late rounds (high-upside sleepers or stream those positions).
 
-If prior strategy is `Flexible` or `none yet`, stay Flexible. Do not fill in Hero RB (or any other approach) just to have a value. If a committed strategy is provided from an earlier pick, continue it (and its QB/TE pairing) unless the taken list or slot guidelines make a pivot clearly better. When you pivot, say so in `rationale`.
-
 Do not reach for a need if the Autodraft suggestion is clearly higher value. Scarcity, slot, and strategy inform the pick; they do not require a worse player.
 
 ## Data for this decision
@@ -84,9 +87,9 @@ You will receive:
 3. **Current roster** — JSON array of players already on this team (`name`, `pos` when known).
 4. **Autodraft suggestion** — JSON object `{name, pos}` or null. This is ESPN's current suggestion for this pick.
 5. **Board snapshot** — counts, `your_slot`, `slot_band`, `picks_until_next`, turn-team rosters, remaining starter holes.
-6. **Prior RB strategy** — a committed approach from an earlier pick, or Flexible / none yet.
+6. **Prior RB strategy** — last pick's `Flexible` or committed approach. Re-evaluate it this pick; it is not a lock.
 
 **Reply format** — JSON object only:
 `{"player": "Player Name", "pos": "WR", "use_autodraft": false, "rb_strategy": "Flexible", "rationale": "string"}`
 
-Copy a player `name` exactly. Set `use_autodraft` true only when `player` is the Autodraft suggestion. `rb_strategy` is `Flexible` until you commit; then `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`. Follow that approach's QB/TE pairing. Never invent Hero RB as a placeholder.
+Copy a player `name` exactly. Set `use_autodraft` true only when `player` is the Autodraft suggestion. `rb_strategy` is `Flexible`, `Hero RB`, `Robust RB`, `Zero RB`, or `Hyper-Fragile RB`. Follow a committed approach's QB/TE pairing. Never invent Hero RB as a placeholder.
