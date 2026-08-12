@@ -1,6 +1,6 @@
 """
 Free-form Q&A chat with DeepSeek, with the ability to look up real player
-data via nfl_data_py mid-conversation.
+data via nflreadpy mid-conversation.
 
 Ollama's /api/generate (what llm_client.py uses everywhere else in this app)
 has no native tool-calling, and DeepSeek-R1 distills aren't reliable with
@@ -23,19 +23,18 @@ from src.helpers.db_manager import save_chat_message, get_chat_messages, log_sys
 
 MAX_TOOL_CALLS = 3
 
-TOOL_INSTRUCTIONS = """You have one tool available for looking up real data: player stats.
+TOOL_INSTRUCTIONS = """DECISION: answer the user's fantasy-football question. You may look up player stats first.
 
-To use it, respond with ONLY this JSON and nothing else (no markdown, no extra commentary):
+DATA YOU WILL RECEIVE:
+1. LEAGUE SETTINGS — plain text with Format and Roster lines (may be empty if none are saved).
+2. USER QUESTION — plain text.
+3. TOOL RESULT (only after you call lookup_player) — JSON object for that player, typically including recent_stats, season_stats_by_year, and injury_status.
+
+REPLY FORMAT — exactly one of these JSON objects, nothing else:
 {"tool": "lookup_player", "player_name": "Full Player Name"}
-This returns that player's most recent game stats, their last several completed seasons
-(season_stats_by_year), and current injury status, straight from nflverse.
+{"tool": "answer", "text": "Your answer in plain conversational text."}
 
-You can call the tool more than once (e.g. to compare two players) before answering.
-
-Once you have enough information, respond with ONLY this JSON:
-{"tool": "answer", "text": "Your answer to the user, in plain conversational text."}
-
-Always respond with exactly one of those two JSON shapes — never anything else."""
+You may call lookup_player more than once (e.g. to compare two players) before answering."""
 
 
 def _run_lookup_player(tool_call: dict, season: int, session_id: str = None) -> dict:
@@ -61,11 +60,14 @@ def ask_deepseek(question: str, session_id: str = None) -> dict:
 
     transcript = f"""{guidance}
 
-{league_settings_block}
-
 {TOOL_INSTRUCTIONS}
 
-User question: {question}"""
+---
+
+{league_settings_block}
+
+USER QUESTION:
+{question}"""
 
     tool_trace = []
     for _ in range(MAX_TOOL_CALLS):

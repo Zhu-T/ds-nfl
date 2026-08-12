@@ -1,25 +1,21 @@
 """
-Draft Assistant Entry Point
-Runs DeepSeek Live Draft Recommendation & ESPN Draft Room Auto-Picker
+Live / mock draft entry point.
+Opens the ESPN draft room, turns Autopick off, and drafts on your turn.
 """
 
 import sys
 import os
 
-# Add root directory to python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.helpers.db_manager import load_env
-from src.helpers.draft_client import run_live_draft_assistant
+from src.helpers.draft_client import run_live_draft_loop
 
 load_env()
 
 if __name__ == "__main__":
+    url = sys.argv[1] if len(sys.argv) > 1 else None
     print("==================================================")
-    print("  NFL Fantasy OpenClaw Live Draft Assistant")
-    print("  Powered by Local DeepSeek R1")
+    print("  NFL Fantasy Live Draft Assistant")
     print("==================================================")
-    
-    # Logs a single draft-pick suggestion for review; nothing is drafted until
-    # it's accepted (see dashboard "Sessions" switcher / db_manager.set_default_session)
-    run_live_draft_assistant()
+    run_live_draft_loop(draft_url=url)

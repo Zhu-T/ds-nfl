@@ -36,7 +36,7 @@
             </div>
             <div class="field-divider vertical" aria-hidden="true"></div>
             <div class="league-info-inline" id="league-info-inline" title="League settings">
-                <span class="league-info-line" id="league-format-value">Run Start Live Draft to fetch league settings</span>
+                <span class="league-info-line" id="league-format-value">Run Setup Draft Strategy to fetch league settings</span>
                 <span class="league-info-line dim" id="league-roster-value"></span>
             </div>
         </div>
@@ -60,7 +60,7 @@
         <aside class="playsheet">
             <div class="brand">
                 <h2>Fantasy HQ</h2>
-                <span>DeepSeek R1 Local</span>
+                <span>DeepSeek · ESPN</span>
             </div>
 
             <nav class="nav-menu">
@@ -80,38 +80,68 @@
 
             <div class="field-divider"></div>
 
-            <div>
-                <div class="playsheet-section-title">Call a Play</div>
+            <div class="play-stack">
+                <section class="play-group" aria-labelledby="draft-prep-label">
+                    <div class="playsheet-section-title" id="draft-prep-label">Draft prep</div>
+                    <p class="play-group-lede">Once, before draft day. ESPN Autopick uses this board.</p>
+                    <button class="play-card" id="btn-draft-strategy" style="--play-color: var(--pos-qb)" onclick="triggerDraftStrategy()">
+                        <span class="play-card-icon">🎯</span>
+                        <span>
+                            <span class="play-card-title" style="display:block">Setup Draft Strategy</span>
+                            <span class="play-card-desc">Rank players and set Autopick prefs for every roster slot. Saves to ESPN.</span>
+                        </span>
+                    </button>
+                    <label class="draft-count-field" for="draft-strategy-count">
+                        <span>Rankings &amp; Autopick slots</span>
+                        <input type="number" id="draft-strategy-count" min="1" max="300" step="1" placeholder="100" inputmode="numeric">
+                    </label>
+                </section>
 
-                <div class="mode-toggle" role="group" aria-label="Execution mode">
-                    <button type="button" class="mode-btn active" id="mode-suggest" onclick="setAutoMode(false)">Suggest</button>
-                    <button type="button" class="mode-btn" id="mode-auto" onclick="setAutoMode(true)">Auto</button>
-                </div>
-                <p class="mode-hint" id="mode-hint">Review and accept each suggestion before anything runs on ESPN.</p>
+                <section class="play-group" id="draft-night-group">
+                    <div class="play-card draft-join-card" id="draft-join-card" style="--play-color: var(--pos-wr)">
+                        <button type="button" class="draft-join-main" id="btn-live-draft" onclick="triggerDraftNight()">
+                            <span class="play-card-icon" id="draft-join-icon">📡</span>
+                            <span>
+                                <span class="play-card-title" id="draft-join-title" style="display:block">Join Live Draft</span>
+                                <span class="play-card-desc" id="draft-join-desc">Open your ESPN draft room and pick automatically.</span>
+                            </span>
+                        </button>
+                        <div class="mode-toggle draft-kind-toggle" role="group" aria-label="Live or mock draft">
+                            <button type="button" class="mode-btn active" id="draft-kind-live" onclick="setDraftKind('live')">Live</button>
+                            <button type="button" class="mode-btn" id="draft-kind-mock" onclick="setDraftKind('mock')">Mock</button>
+                        </div>
+                        <label class="draft-url-field hidden" id="mock-draft-url-field" for="mock-draft-url">
+                            <span>Mock draft link</span>
+                            <input type="url" id="mock-draft-url" placeholder="Paste ESPN mock draft URL" autocomplete="off">
+                        </label>
+                    </div>
+                    <button type="button" class="btn btn-stop-draft hidden" id="btn-stop-draft" onclick="stopLiveDraft()">Stop draft</button>
+                </section>
 
-                <button class="play-card" id="btn-draft" style="--play-color: var(--pos-wr)" onclick="triggerDraftAssistant()">
-                    <span class="play-card-icon">📋</span>
-                    <span>
-                        <span class="play-card-title" style="display:block">Start Live Draft</span>
-                        <span class="play-card-desc">Scan the ESPN draft room and get DeepSeek's pick recommendation.</span>
-                    </span>
-                </button>
-
-                <button class="play-card" id="btn-optimizer" style="--play-color: var(--pos-rb)" onclick="triggerLineupOptimizer()">
-                    <span class="play-card-icon">🏈</span>
-                    <span>
-                        <span class="play-card-title" style="display:block">Set Lineup</span>
-                        <span class="play-card-desc">Evaluate this week's roster against real stats &amp; injury data, then set your optimal starters.</span>
-                    </span>
-                </button>
-
-                <button class="play-card" id="btn-trade" style="--play-color: var(--pos-te)" onclick="triggerTradeAnalyzer()">
-                    <span class="play-card-icon">🔁</span>
-                    <span>
-                        <span class="play-card-title" style="display:block">Review Trade Offers</span>
-                        <span class="play-card-desc">Check pending trades and get an accept / decline recommendation.</span>
-                    </span>
-                </button>
+                <section class="play-group weekly-group" id="weekly-group" aria-labelledby="weekly-label">
+                    <div class="playsheet-section-title" id="weekly-label">This week</div>
+                    <div class="weekly-toolbar">
+                        <div class="mode-toggle" role="group" aria-label="Lineup and trade mode">
+                            <button type="button" class="mode-btn active" id="mode-suggest" onclick="setAutoMode(false)">Suggest</button>
+                            <button type="button" class="mode-btn" id="mode-auto" onclick="setAutoMode(true)">Auto</button>
+                        </div>
+                        <p class="mode-hint" id="mode-hint">Review lineup and trade suggestions before ESPN.</p>
+                    </div>
+                    <button class="play-card" id="btn-optimizer" style="--play-color: var(--pos-rb)" onclick="triggerLineupOptimizer()">
+                        <span class="play-card-icon">🏈</span>
+                        <span>
+                            <span class="play-card-title" style="display:block">Set Lineup</span>
+                            <span class="play-card-desc">Starters vs bench for this week, using stats and injuries.</span>
+                        </span>
+                    </button>
+                    <button class="play-card" id="btn-trade" style="--play-color: var(--pos-te)" onclick="triggerTradeAnalyzer()">
+                        <span class="play-card-icon">🔁</span>
+                        <span>
+                            <span class="play-card-title" style="display:block">Review Trade Offers</span>
+                            <span class="play-card-desc">Accept or decline pending ESPN trades.</span>
+                        </span>
+                    </button>
+                </section>
             </div>
 
             <div class="field-divider" style="margin: 1rem 0 0.85rem;"></div>
@@ -142,7 +172,7 @@
 
             <div class="playsheet-footer">
                 <div class="field-divider" style="margin-bottom: 0.85rem;"></div>
-                <p>Every recommendation, prompt, and raw model response is logged to the active session below.</p>
+                <p>Draft strategy writes Autopick to ESPN. Live/mock draft always picks for you. Lineup and trades follow Suggest or Auto.</p>
             </div>
         </aside>
 
@@ -151,7 +181,7 @@
             <header class="top-header">
                 <div class="header-title">
                     <h1 id="page-heading">Action History</h1>
-                    <p id="page-subheading">Recommendations, prompts sent, and automated ESPN execution logs.</p>
+                    <p id="page-subheading">Draft strategy, live draft, lineup, and trade runs for this session.</p>
                 </div>
                 <button class="btn" onclick="refreshActiveTab()">Refresh</button>
             </header>

@@ -7,6 +7,9 @@ let defaultSessionId = null;
 let activeSessionId = null;
 
 let autoMode = false;
+let liveDraftPollTimer = null;
+let liveDraftRunning = false;
+let draftKind = "live";
 
 let modalActionId = null;
 let modalActionType = null;
@@ -15,6 +18,7 @@ let modalSuggestions = [];
 document.addEventListener("DOMContentLoaded", () => {
     initTheme();
     initAutoMode();
+    initDraftKind();
     document.addEventListener("click", (e) => {
         const menu = document.getElementById("session-menu");
         const trigger = document.getElementById("session-trigger");
@@ -25,6 +29,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("session-create-form").addEventListener("submit", handleCreateSession);
     document.getElementById("chat-form").addEventListener("submit", handleChatSubmit);
     document.getElementById("espn-settings-form").addEventListener("submit", handleEspnSettingsSubmit);
+    const mockInput = document.getElementById("mock-draft-url");
+    if (mockInput) mockInput.value = localStorage.getItem("nfl_mock_draft_url") || "";
     loadSessions();
 });
 
@@ -68,8 +74,10 @@ function renderModeToggle() {
     const hint = document.getElementById("mode-hint");
     hint.classList.toggle("warn", autoMode);
     hint.innerText = autoMode
-        ? "Auto mode: accepted-by-default actions run on ESPN immediately, no review."
-        : "Review and accept each suggestion before anything runs on ESPN.";
+        ? "Auto: lineup and trades run on ESPN immediately."
+        : "Suggest: review lineup and trades before ESPN.";
+    const weekly = document.getElementById("weekly-group");
+    if (weekly) weekly.classList.toggle("is-auto", autoMode);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -91,6 +99,7 @@ async function loadSessions() {
         loadHistory();
         loadLeagueSettings();
         loadEspnSettings();
+        pollLiveDraftStatus();
     } catch (err) {
         document.getElementById("session-trigger-name").innerText = "Sessions unavailable";
     }
@@ -106,10 +115,21 @@ async function loadLeagueSettings() {
         const settings = await res.json();
         if (settings) {
             formatEl.innerText = settings.league_format;
-            rosterEl.innerText = settings.roster_settings;
-            wrapperEl.title = `${settings.league_format} — ${settings.roster_settings}`;
+            const order = settings.draft_order_json || [];
+            const you = order.find(p => p.is_you);
+            const n = order.length;
+            let pickLine = "";
+            if (you && n) {
+                const slot = Number(you.pick);
+                const earlyEnd = Math.max(1, Math.round(n * 4 / 12));
+                const middleEnd = Math.max(earlyEnd, Math.round(n * 8 / 12));
+                const band = slot <= earlyEnd ? "early" : slot <= middleEnd ? "middle" : "late";
+                pickLine = `Pick #${slot} of ${n} · ${band}`;
+            }
+            rosterEl.innerText = [settings.roster_settings, pickLine].filter(Boolean).join(" · ");
+            wrapperEl.title = [settings.league_format, settings.roster_settings, pickLine].filter(Boolean).join(" — ");
         } else {
-            formatEl.innerText = "Run Start Live Draft to fetch league settings";
+            formatEl.innerText = "Run Setup Draft Strategy to fetch league settings";
             rosterEl.innerText = "";
             wrapperEl.title = "League settings haven't been fetched for this session yet";
         }
@@ -218,6 +238,7 @@ function selectSession(sessionId) {
     refreshActiveTab();
     loadLeagueSettings();
     loadEspnSettings();
+    pollLiveDraftStatus();
 }
 
 async function setDefaultSession(sessionId) {
@@ -261,6 +282,7 @@ async function handleCreateSession(event) {
         refreshActiveTab();
         loadLeagueSettings();
         loadEspnSettings();
+        pollLiveDraftStatus();
     } catch (err) {
         showToast(`Couldn't create session: ${err.message}`, false);
     }
@@ -270,11 +292,28 @@ function sessionQuery() {
     return activeSessionId ? `?session=${encodeURIComponent(activeSessionId)}` : "";
 }
 
-function runQuery() {
+function runQuery(extraParams = {}) {
     const params = new URLSearchParams();
     if (activeSessionId) params.set("session", activeSessionId);
     params.set("auto", autoMode ? "true" : "false");
+    Object.entries(extraParams).forEach(([key, value]) => {
+        if (value != null && value !== "") params.set(key, value);
+    });
     return `?${params.toString()}`;
+}
+
+async function readApiJson(res) {
+    const text = await res.text();
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        const snippet = (text || "").trim().slice(0, 80).replace(/\s+/g, " ");
+        throw new Error(
+            `Server returned non-JSON (HTTP ${res.status}). ` +
+            `Restart the dashboard with: python src/dashboard_server.py ` +
+            `(got: ${snippet || "empty body"}…)`
+        );
+    }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -292,7 +331,7 @@ function switchTab(tab) {
 
     if (tab === 'actions') {
         document.getElementById("page-heading").innerText = "Action History";
-        document.getElementById("page-subheading").innerText = "Recommendations, prompts sent, and automated ESPN execution logs.";
+        document.getElementById("page-subheading").innerText = "Draft strategy, live draft, lineup, and trade runs for this session.";
         filterCurrentView();
     } else if (tab === 'syslogs') {
         document.getElementById("page-heading").innerText = "API Cache & System Log";
@@ -410,7 +449,13 @@ function renderActionTable(logs) {
     }
 
     tbody.innerHTML = logs.map(log => {
-        const startersHtml = (log.starters || []).map(p => `<span class="player-tag">${escapeHtml(p)}</span>`).join("");
+        const starters = log.starters || [];
+        const isDraftBoard = log.action_type === "DRAFT_STRATEGY_SETUP";
+        const startersHtml = isDraftBoard
+            ? `<span class="player-tag">${starters.length} ranked</span>`
+                + starters.slice(0, 5).map(p => `<span class="player-tag">${escapeHtml(p)}</span>`).join("")
+                + (starters.length > 5 ? `<span class="player-tag">+${starters.length - 5} more</span>` : "")
+            : starters.map(p => `<span class="player-tag">${escapeHtml(p)}</span>`).join("");
         const dateStr = new Date(log.timestamp).toLocaleString();
         const visuals = statusVisuals(log.status);
         const weekText = log.week === 0 ? "Draft" : `Week ${log.week || 1}`;
@@ -469,7 +514,11 @@ function renderSystemTable(logs) {
 
 function statusMatchesFilter(status, filterValue) {
     if (filterValue === "ALL") return true;
-    if (filterValue === "EXECUTED") return status === "EXECUTED" || status === "PARTIALLY_EXECUTED";
+    if (filterValue === "EXECUTED") return status === "EXECUTED";
+    // Partial applies still have pending suggestions to review.
+    if (filterValue === "PENDING_REVIEW") {
+        return status === "PENDING_REVIEW" || status === "PARTIALLY_EXECUTED";
+    }
     return status === filterValue;
 }
 
@@ -503,15 +552,21 @@ async function openModal(id) {
     modalActionId = log.id;
     modalActionType = log.action_type;
 
-    const weekText = log.week === 0 ? "Live Draft" : `Week ${log.week}`;
+    const weekText = log.week === 0 ? "Draft" : `Week ${log.week}`;
     document.getElementById("modal-title").innerText = `Action #${log.id} — ${weekText}`;
     document.getElementById("modal-rationale").innerText = log.rationale || "No rationale recorded.";
 
+    const isDraftBoard = log.action_type === "DRAFT_STRATEGY_SETUP";
+    const isLivePick = log.action_type === "LIVE_DRAFT_PICK";
     const startersList = (log.starters || []).map(s => `<span class="player-tag">${escapeHtml(s)}</span>`).join("");
     const benchList = (log.bench || []).map(b => `<span class="player-tag" style="opacity: 0.6">${escapeHtml(b)}</span>`).join("");
 
-    document.getElementById("modal-starters-pills").innerHTML = `<strong>Starters / pick:</strong> ${startersList}`;
-    document.getElementById("modal-bench-pills").innerHTML = log.bench && log.bench.length ? `<strong>Bench:</strong> ${benchList}` : "";
+    document.getElementById("modal-starters-pills").innerHTML =
+        `<strong>${isDraftBoard ? "Rankings" : isLivePick ? "Pick" : "Starters / pick"}:</strong> ${startersList}`;
+    document.getElementById("modal-bench-pills").innerHTML =
+        log.bench && log.bench.length
+            ? `<strong>${isDraftBoard ? "Autopick prefs" : isLivePick ? "Via" : "Bench"}:</strong> ${benchList}`
+            : "";
 
     document.getElementById("modal-prompt-sent").innerText = log.prompt_sent || "Default prompt format used.";
 
@@ -544,7 +599,6 @@ function renderModalSuggestions(actionStatus) {
     const list = document.getElementById("modal-suggestions-list");
     const emptyMsg = document.getElementById("modal-suggestions-empty");
     const applyBtn = document.getElementById("modal-apply-btn");
-    const reviewable = actionStatus === "PENDING_REVIEW";
 
     if (modalSuggestions.length === 0) {
         list.innerHTML = "";
@@ -554,10 +608,22 @@ function renderModalSuggestions(actionStatus) {
     }
     emptyMsg.classList.add("hidden");
 
+    // Keep accept/decline available while any suggestion is still PENDING —
+    // including after a partial apply (action status PARTIALLY_EXECUTED).
+    const hasPending = modalSuggestions.some(s => s.status === "PENDING");
+    const hasAccepted = modalSuggestions.some(s => s.status === "ACCEPTED");
+    const canReview = actionStatus === "PENDING_REVIEW"
+        || actionStatus === "PARTIALLY_EXECUTED"
+        || hasPending;
+
     list.innerHTML = modalSuggestions.map(s => {
         const isAccepted = s.status === "ACCEPTED";
         const isDeclined = s.status === "DECLINED";
-        const controls = reviewable
+        const isPending = s.status === "PENDING";
+        // Allow changing mind on accept/decline until the suggestion has been executed.
+        const canDecide = canReview && (isPending || isAccepted || isDeclined);
+
+        const controls = canDecide
             ? `
                 <div class="suggestion-actions">
                     <button type="button" class="decision-btn accept ${isAccepted ? 'selected' : ''}" onclick="decideSuggestion(${s.id}, 'ACCEPTED')">Accept</button>
@@ -577,7 +643,10 @@ function renderModalSuggestions(actionStatus) {
         `;
     }).join("");
 
-    applyBtn.classList.toggle("hidden", !reviewable);
+    applyBtn.classList.toggle("hidden", !(canReview && hasAccepted));
+    applyBtn.innerText = hasPending && hasAccepted
+        ? "Apply Accepted (leave rest pending)"
+        : "Apply Accepted";
 }
 
 async function decideSuggestion(suggestionId, decision) {
@@ -592,7 +661,9 @@ async function decideSuggestion(suggestionId, decision) {
 
         const idx = modalSuggestions.findIndex(s => s.id === suggestionId);
         if (idx !== -1) modalSuggestions[idx] = data.suggestion;
-        renderModalSuggestions("PENDING_REVIEW");
+
+        const log = allActionLogs.find(l => l.id === modalActionId);
+        renderModalSuggestions(log ? log.status : "PENDING_REVIEW");
     } catch (err) {
         showToast(`Couldn't record decision: ${err.message}`, false);
     }
@@ -600,10 +671,19 @@ async function decideSuggestion(suggestionId, decision) {
 
 async function applyAcceptedSuggestions() {
     const acceptedCount = modalSuggestions.filter(s => s.status === "ACCEPTED").length;
-    const runsOnEspn = modalActionType === "LINEUP_OPTIMIZATION" || modalActionType === "LIVE_DRAFT_PICK";
+    const pendingCount = modalSuggestions.filter(s => s.status === "PENDING").length;
+    const runsOnEspn = modalActionType === "LINEUP_OPTIMIZATION";
 
-    if (runsOnEspn && acceptedCount > 0) {
-        const ok = confirm(`This opens a browser and clicks on ESPN for ${acceptedCount} accepted suggestion(s). Continue?`);
+    if (acceptedCount === 0) {
+        showToast("Accept at least one suggestion before applying.", false);
+        return;
+    }
+
+    if (runsOnEspn) {
+        const leftover = pendingCount > 0
+            ? ` ${pendingCount} other suggestion(s) will stay pending so you can review them after.`
+            : "";
+        const ok = confirm(`This opens a browser and clicks on ESPN for ${acceptedCount} accepted suggestion(s).${leftover} Continue?`);
         if (!ok) return;
     }
 
@@ -621,8 +701,18 @@ async function applyAcceptedSuggestions() {
         if (data.status !== "success") throw new Error(data.message || "Couldn't apply suggestions");
 
         showToast(`Applied ${data.executed || 0} accepted suggestion(s).`, false);
-        closeModal();
         await loadHistory();
+
+        // Keep the modal open when other suggestions are still pending.
+        const log = allActionLogs.find(l => l.id === modalActionId);
+        if (log) {
+            modalActionType = log.action_type;
+            await loadModalSuggestions(log.status);
+            const stillPending = modalSuggestions.some(s => s.status === "PENDING");
+            if (!stillPending) closeModal();
+        } else {
+            closeModal();
+        }
     } catch (err) {
         showToast(`Couldn't apply suggestions: ${err.message}`, false);
     } finally {
@@ -662,15 +752,47 @@ async function triggerLineupOptimizer() {
     }
 }
 
-async function triggerDraftAssistant() {
-    showToast(autoMode ? "Scanning the draft room and drafting automatically…" : "Scanning the live draft room via DeepSeek R1…");
+function readDraftStrategyCount() {
+    const raw = (document.getElementById("draft-strategy-count")?.value || "").trim();
+    if (!raw) return 100;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return 100;
+    return Math.max(1, Math.min(300, n));
+}
+
+async function triggerDraftStrategy() {
+    const topN = readDraftStrategyCount();
+    showToast(`Loading league settings, then asking DeepSeek for ${topN} rankings + Autopick slots…`);
     setButtonsDisabled(true);
 
     try {
-        const res = await fetch(`/api/run-draft-assistant${runQuery()}`, { method: "POST" });
-        const data = await res.json();
+        const res = await fetch(`/api/run-draft-strategy${runQuery({ top_n: topN, auto: "false" })}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ top_n: topN }),
+        });
+        const raw = await res.text();
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (_) {
+            throw new Error(
+                res.status === 404
+                    ? "Draft strategy API not found — restart the dashboard server (python src/dashboard_server.py) and hard-refresh."
+                    : `Server returned non-JSON (HTTP ${res.status}). Restart the dashboard and try again.`
+            );
+        }
         if (data.status === "success") {
-            showToast(`${data.message} (#${data.record_id || 'new'})`, false);
+            const top = (data.top_players || []).slice(0, 3).map(p => p.name).join(", ");
+            const league = data.league_format ? ` [${data.league_format}]` : "";
+            const picks = (data.pick_by_pick || []).slice(0, 5).join(" → ");
+            showToast(
+                `${data.message}${league}`
+                + (top ? ` Top: ${top}` : "")
+                + (picks ? ` | Picks: ${picks}` : "")
+                + ` (#${data.record_id || "new"})`,
+                false
+            );
         } else {
             showToast(`Error: ${data.message}`, false);
         }
@@ -683,8 +805,145 @@ async function triggerDraftAssistant() {
     }
 }
 
+function initDraftKind() {
+    draftKind = localStorage.getItem("nfl_draft_kind") === "mock" ? "mock" : "live";
+    renderDraftKind();
+}
+
+function setDraftKind(kind) {
+    if (liveDraftRunning) return;
+    draftKind = kind === "mock" ? "mock" : "live";
+    localStorage.setItem("nfl_draft_kind", draftKind);
+    renderDraftKind();
+}
+
+function renderDraftKind() {
+    const isMock = draftKind === "mock";
+    document.getElementById("draft-kind-live")?.classList.toggle("active", !isMock);
+    document.getElementById("draft-kind-mock")?.classList.toggle("active", isMock);
+    const title = document.getElementById("draft-join-title");
+    const desc = document.getElementById("draft-join-desc");
+    const icon = document.getElementById("draft-join-icon");
+    if (title) title.innerText = isMock ? "Join Mock Draft" : "Join Live Draft";
+    if (desc) {
+        desc.innerText = isMock
+            ? "Paste a mock room URL, then join. Picks run automatically."
+            : "Open your ESPN draft room and pick automatically.";
+    }
+    if (icon) icon.innerText = isMock ? "🧪" : "📡";
+    document.getElementById("mock-draft-url-field")?.classList.toggle("hidden", !isMock);
+    document.getElementById("draft-join-card")?.classList.toggle("is-mock", isMock);
+}
+
+async function triggerDraftNight() {
+    if (draftKind === "mock") {
+        const url = (document.getElementById("mock-draft-url")?.value || "").trim();
+        if (!url) {
+            showToast("Paste an ESPN mock draft URL first.", false);
+            return;
+        }
+        localStorage.setItem("nfl_mock_draft_url", url);
+        await startLiveDraftJob(url);
+        return;
+    }
+    await startLiveDraftJob(null);
+}
+
+async function startLiveDraftJob(draftUrl) {
+    showToast("Opening ESPN draft room — picks will be made automatically…");
+    setButtonsDisabled(true);
+    try {
+        const res = await fetch(`/api/run-live-draft${sessionQuery()}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ draft_url: draftUrl || "" }),
+        });
+        const data = await readApiJson(res);
+        if (data.status === "success") {
+            applyLiveDraftStatus(data);
+            showToast(data.message || "Live draft started.", true);
+        } else {
+            showToast(`Error: ${data.message}`, false);
+            setButtonsDisabled(false);
+        }
+    } catch (e) {
+        showToast(`Execution error: ${e.message}`, false);
+        setButtonsDisabled(false);
+    }
+}
+
+async function stopLiveDraft() {
+    try {
+        const res = await fetch(`/api/stop-live-draft${sessionQuery()}`, { method: "POST" });
+        const data = await readApiJson(res);
+        applyLiveDraftStatus(data);
+        showToast(data.message || "Stopping live draft…", true);
+    } catch (e) {
+        showToast(`Couldn't stop draft: ${e.message}`, false);
+    }
+}
+
+function startLiveDraftPolling() {
+    if (liveDraftPollTimer) return;
+    liveDraftPollTimer = setInterval(pollLiveDraftStatus, 2000);
+}
+
+function stopLiveDraftPolling() {
+    if (!liveDraftPollTimer) return;
+    clearInterval(liveDraftPollTimer);
+    liveDraftPollTimer = null;
+}
+
+async function pollLiveDraftStatus() {
+    try {
+        const res = await fetch(`/api/live-draft-status${sessionQuery()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        applyLiveDraftStatus(data);
+    } catch (_) {
+        // Dashboard may be restarting; keep the last known status.
+    }
+}
+
+function applyLiveDraftStatus(data) {
+    const running = !!data.running;
+    const wasRunning = liveDraftRunning;
+    liveDraftRunning = running;
+
+    const stopBtn = document.getElementById("btn-stop-draft");
+    const joinCard = document.getElementById("draft-join-card");
+    const mockInput = document.getElementById("mock-draft-url");
+    if (mockInput && !mockInput.value) {
+        mockInput.value = localStorage.getItem("nfl_mock_draft_url") || "";
+    }
+
+    const msg = data.message || (running ? "Drafting…" : "");
+    if (stopBtn) stopBtn.classList.toggle("hidden", !running);
+    if (joinCard) joinCard.classList.toggle("is-running", running);
+
+    document.getElementById("btn-live-draft")?.toggleAttribute("disabled", running);
+    document.getElementById("draft-kind-live")?.toggleAttribute("disabled", running);
+    document.getElementById("draft-kind-mock")?.toggleAttribute("disabled", running);
+    if (mockInput) mockInput.disabled = running;
+
+    if (running) {
+        startLiveDraftPolling();
+        setButtonsDisabled(true);
+        if (msg) showToast(msg, true);
+    } else {
+        stopLiveDraftPolling();
+        if (wasRunning) {
+            setButtonsDisabled(false);
+            if (msg) showToast(msg, false);
+            loadHistory();
+        }
+    }
+}
+
 async function triggerTradeAnalyzer() {
-    showToast("Evaluating pending trade offers via DeepSeek R1…");
+    showToast(autoMode
+        ? "Evaluating pending trade offers and applying Auto decisions…"
+        : "Evaluating pending trade offers via DeepSeek R1…");
     setButtonsDisabled(true);
 
     try {
@@ -805,8 +1064,14 @@ function showToast(msg, isSpinning = true) {
 }
 
 function setButtonsDisabled(disabled) {
-    const btns = document.querySelectorAll("#btn-optimizer, #btn-draft, #btn-trade");
-    btns.forEach(b => b.disabled = disabled);
+    const btns = document.querySelectorAll("#btn-optimizer, #btn-draft-strategy, #btn-trade, #btn-live-draft, #draft-kind-live, #draft-kind-mock");
+    btns.forEach(b => b.disabled = disabled || liveDraftRunning);
+    const countInput = document.getElementById("draft-strategy-count");
+    if (countInput) countInput.disabled = disabled || liveDraftRunning;
+    const mockInput = document.getElementById("mock-draft-url");
+    if (mockInput) mockInput.disabled = disabled || liveDraftRunning;
+    const stopBtn = document.getElementById("btn-stop-draft");
+    if (stopBtn) stopBtn.disabled = false;
 }
 
 function escapeHtml(str) {

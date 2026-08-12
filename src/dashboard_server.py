@@ -1,11 +1,12 @@
 """
 Dashboard Web Server & REST API
-Main control center for triggering Lineup Optimizer, Live Draft Assistant, and Trade Analyzer.
+Main control center for triggering Lineup Optimizer, Pre-Draft Strategy, Live Draft, and Trade Analyzer.
 """
 
 import sys
 import os
 import json
+import logging
 import urllib.parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
@@ -20,7 +21,8 @@ from src.helpers.db_manager import (
     get_espn_settings, save_espn_settings,
 )
 from src.lineup_optimizer import run_lineup_optimizer_workflow, apply_accepted_lineup_suggestions
-from src.helpers.draft_client import run_live_draft_assistant, apply_accepted_draft_suggestion
+from src.helpers.draft_strategy_client import setup_draft_strategy
+from src.helpers.draft_client import start_live_draft, stop_live_draft, live_draft_status
 from src.helpers.trade_client import run_trade_analyzer_workflow, apply_trade_suggestions
 from src.helpers.chat_client import ask_deepseek, get_chat_history
 
@@ -29,8 +31,6 @@ from src.helpers.chat_client import ask_deepseek, get_chat_history
 def _executor_for_action_type(action_type: str):
     if action_type == "LINEUP_OPTIMIZATION":
         return apply_accepted_lineup_suggestions
-    if action_type == "LIVE_DRAFT_PICK":
-        return apply_accepted_draft_suggestion
     if action_type.startswith("TRADE_OFFER"):
         return apply_trade_suggestions
     return None
@@ -89,8 +89,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(200, get_suggestions_for_action(int(action_id), session_id=session_id))
             return
 
-        # League/roster/draft settings saved for this session (null until the
-        # draft assistant has run there at least once)
+        # League/roster/draft settings saved for this session (null until
+        # Setup Draft Strategy has run there at least once)
         if parsed_path.path == "/api/league-settings":
             self._send_json(200, get_league_settings(session_id=session_id))
             return
@@ -98,6 +98,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # Chat history for this session
         if parsed_path.path == "/api/chat":
             self._send_json(200, get_chat_history(session_id=session_id))
+            return
+
+        # Live/mock draft job status (picks always execute in-room).
+        if parsed_path.path == "/api/live-draft-status":
+            self._send_json(200, live_draft_status(session_id=session_id))
             return
 
         # This session's ESPN connection settings. Cookie values themselves are
@@ -219,14 +224,77 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(500, {"status": "error", "message": str(e)})
             return
 
-        # Draft Assistant Trigger
-        if parsed_path.path == "/api/run-draft-assistant":
+        # Pre-Draft Strategy: DeepSeek ranks top N players → ESPN draftList
+        if parsed_path.path == "/api/run-draft-strategy":
             try:
-                record_id = run_live_draft_assistant(session_id=session_id, auto_execute=auto_execute)
+                body = self._read_json_body()
+                league_id = (
+                    (query.get("league_id", [None])[0] or "").strip()
+                    or (body.get("league_id") or "").strip()
+                    or None
+                )
+                team_id = (
+                    (query.get("team_id", [None])[0] or "").strip()
+                    or (body.get("team_id") or "").strip()
+                    or None
+                )
+                top_n_raw = (
+                    (query.get("top_n", [None])[0] or "")
+                    or body.get("top_n")
+                    or 100
+                )
+                try:
+                    top_n = max(1, min(300, int(top_n_raw)))
+                except (TypeError, ValueError):
+                    top_n = 100
+                result = setup_draft_strategy(
+                    league_id=league_id,
+                    team_id=team_id,
+                    top_n=top_n,
+                    session_id=session_id,
+                )
                 self._send_json(200, {
                     "status": "success",
-                    "message": "Pick drafted automatically." if auto_execute else "Draft suggestion ready for review.",
-                    "record_id": record_id
+                    "message": (
+                        f"Saved DeepSeek's top {result['wrote_count']} rankings"
+                        + (
+                            f" and {len(result.get('pick_by_pick') or [])} pick-by-pick prefs"
+                            if result.get("pick_by_pick") else ""
+                        )
+                        + " to ESPN pre-draft strategy."
+                    ),
+                    **result,
+                })
+            except Exception as e:
+                self._send_json(500, {"status": "error", "message": str(e)})
+            return
+
+        # Live / mock draft: always automatic (Suggest/Auto does not apply).
+        if parsed_path.path == "/api/run-live-draft":
+            try:
+                body = self._read_json_body()
+                draft_url = (
+                    (query.get("draft_url", [None])[0] or "").strip()
+                    or (body.get("draft_url") or "").strip()
+                    or None
+                )
+                status = start_live_draft(draft_url=draft_url, session_id=session_id)
+                self._send_json(200, {
+                    "status": "success",
+                    "message": "Live draft started. Picks will be made automatically on your turn.",
+                    **status,
+                })
+            except Exception as e:
+                self._send_json(500, {"status": "error", "message": str(e)})
+            return
+
+        if parsed_path.path == "/api/stop-live-draft":
+            try:
+                status = stop_live_draft(session_id=session_id)
+                self._send_json(200, {
+                    "status": "success",
+                    "message": "Stopping live draft…",
+                    **status,
                 })
             except Exception as e:
                 self._send_json(500, {"status": "error", "message": str(e)})
@@ -245,10 +313,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(500, {"status": "error", "message": str(e)})
             return
 
-        self.send_error(404, "Endpoint not found")
+        self._send_json(404, {"status": "error", "message": f"Endpoint not found: {parsed_path.path}"})
+
+
+def _configure_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
 
 
 def start_server():
+    _configure_logging()
     # Ensure the session registry exists, and only auto-seed the built-in
     # "test" session so newly created real sessions start empty.
     sessions = list_sessions()["sessions"]
@@ -256,12 +334,24 @@ def start_server():
         seed_demo_data_if_empty(session_id="test")
 
     server_address = ("", PORT)
-    httpd = HTTPServer(server_address, DashboardHandler)
-    print(f"==================================================")
-    print(f"  NFL Fantasy OpenClaw Control Dashboard")
-    print(f"  URL: http://localhost:{PORT}")
-    print(f"  Sessions dir: data/sessions/")
-    print(f"==================================================")
+    try:
+        httpd = HTTPServer(server_address, DashboardHandler)
+    except OSError as e:
+        print(f"ERROR: Port {PORT} is already in use.", flush=True)
+        print("Close the other dashboard process so this console can show logs.", flush=True)
+        print(f"  ({e})", flush=True)
+        try:
+            input("Press Enter to exit...")
+        except EOFError:
+            pass
+        sys.exit(1)
+
+    print("==================================================", flush=True)
+    print("  NFL Fantasy OpenClaw Control Dashboard", flush=True)
+    print(f"  URL: http://localhost:{PORT}", flush=True)
+    print("  Sessions dir: data/sessions/", flush=True)
+    print("==================================================", flush=True)
+    logging.info("Dashboard listening on http://localhost:%s", PORT)
     httpd.serve_forever()
 
 

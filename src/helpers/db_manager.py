@@ -459,9 +459,9 @@ def save_league_settings(league_format: str, roster_settings: str, raw: dict = N
                           draft_order: list = None, draft_type: str = None, session_id: str = None):
     """
     Upsert this session's league/draft settings (single row per session db).
-    draft_order/draft_type are only ever set by the draft assistant (see
-    espn_client.fetch_espn_league_settings) — league_format/roster_settings are
-    reused by lineup/trade prompts too.
+    draft_order/draft_type are set whenever league settings are fetched
+    (Setup Draft Strategy or Join Live/Mock Draft). league_format/roster_settings
+    are reused by lineup/trade prompts too.
     """
     init_db(session_id)
     conn = get_db_connection(session_id)
@@ -508,6 +508,9 @@ def fetch_cached_api_request(url: str, cookies: dict = None, ttl_seconds: int = 
     Checks SQLite cache for API responses.
     If valid cache entry exists within TTL, returns cached JSON data (0 HTTP requests sent, 0 IP risk).
     Otherwise, executes HTTP GET, caches response in SQLite, and returns data.
+
+    Caller-supplied ttl_seconds controls freshness: ttl<=0 always fetches fresh.
+    Cache validity uses the caller's ttl (not a stale longer TTL from a prior write).
     """
     init_db(session_id)
     url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -518,10 +521,9 @@ def fetch_cached_api_request(url: str, cookies: dict = None, ttl_seconds: int = 
     cursor.execute("SELECT response_json, timestamp, ttl_seconds FROM api_cache WHERE url_hash = ?", (url_hash,))
     cached = cursor.fetchone()
 
-    if cached:
+    if cached and ttl_seconds > 0:
         cached_ts = cached["timestamp"]
-        entry_ttl = cached["ttl_seconds"]
-        if (now_ts - cached_ts) < entry_ttl:
+        if (now_ts - cached_ts) < ttl_seconds:
             conn.close()
             log_system_event("API_CACHE_HIT", f"Reused cached ESPN API response (0 IP requests sent): {url}", {"url": url, "age_seconds": now_ts - cached_ts}, session_id=session_id)
             return json.loads(cached["response_json"])
@@ -533,15 +535,17 @@ def fetch_cached_api_request(url: str, cookies: dict = None, ttl_seconds: int = 
         res.raise_for_status()
         res_data = res.json()
 
-        # Save fresh payload to SQLite API Cache
-        cursor.execute("""
-            INSERT OR REPLACE INTO api_cache (url_hash, url, response_json, timestamp, ttl_seconds)
-            VALUES (?, ?, ?, ?, ?)
-        """, (url_hash, url, json.dumps(res_data), now_ts, ttl_seconds))
-        conn.commit()
+        # Save fresh payload to SQLite API Cache (skip store when ttl<=0 so live polls stay fresh)
+        store_ttl = max(int(ttl_seconds), 1)
+        if ttl_seconds > 0:
+            cursor.execute("""
+                INSERT OR REPLACE INTO api_cache (url_hash, url, response_json, timestamp, ttl_seconds)
+                VALUES (?, ?, ?, ?, ?)
+            """, (url_hash, url, json.dumps(res_data), now_ts, store_ttl))
+            conn.commit()
+            log_system_event("API_CACHE_STORED", f"Cached fresh ESPN API response in SQLite (TTL: {store_ttl}s)", {"url": url}, session_id=session_id)
         conn.close()
 
-        log_system_event("API_CACHE_STORED", f"Cached fresh ESPN API response in SQLite (TTL: {ttl_seconds}s)", {"url": url}, session_id=session_id)
         return res_data
     except Exception as e:
         conn.close()

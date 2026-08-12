@@ -1,264 +1,1141 @@
 """
-ESPN Live Draft Helper
-Parses ESPN Live Draft Room UI via Playwright and executes DeepSeek recommended picks.
+ESPN live / mock draft helper.
+
+On your turn: scrape taken players (right), current roster (left), and the
+Autodraft suggestion (banner). DeepSeek names one pick. If it is the
+Autodraft suggestion, click DRAFT on the banner; otherwise search the
+available-players table. If that player cannot be found, click the banner.
 """
 
-import os
+from __future__ import annotations
+
 import json
 import logging
-import datetime
+import os
+import re
+import threading
+from typing import Optional
+
 from playwright.sync_api import sync_playwright
-from src.helpers.llm_client import query_local_deepseek
-from src.helpers.db_manager import (
-    log_action, create_suggestions, get_suggestions_for_action,
-    update_suggestion_status, update_action_status, log_system_event,
-)
-from src.helpers.nfl_data_client import enrich_players_with_stats, refresh_espn_id_crosswalk
+
+from src.helpers.db_manager import get_league_settings, log_action, log_system_event
 from src.helpers.espn_client import (
-    ensure_espn_login, fetch_espn_league_settings, format_league_settings_block, format_draft_order_block,
+    draft_slot_band,
+    ensure_espn_login,
+    espn_season,
+    fetch_draft_picks_detail,
+    fetch_espn_league_settings,
+    format_draft_order_block,
+    format_league_settings_block,
+    get_saved_league_settings_block,
+    remember_espn_player,
     resolve_espn_settings,
+    snake_picks_until_next,
 )
+from src.helpers.llm_client import query_local_deepseek
+from src.helpers.playwright_runner import playwright_sync
 from src.helpers.prompt_loader import load_guidance
 
+_JOBS: dict = {}
+_JOBS_LOCK = threading.Lock()
 
-def _is_espn_page_not_found(page) -> bool:
-    """
-    Detect ESPN's own "Page not found" response for the draft room — this
-    happens when no draft is currently scheduled/active for the league (ESPN
-    doesn't render a draft room page outside of an actual draft window), or
-    when the league id is wrong. Checked explicitly so a dead page fails
-    loudly instead of silently falling through to mock demo data.
-    """
+_SCRAPE_JS = """() => {
+  const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
+  const posOf = (s) => {
+    const m = (s || "").match(/\\b(QB|RB|WR|TE|K|D\\/ST|DST|DEF|FLEX|OP|BE)\\b/i);
+    if (!m) return "";
+    const p = m[1].toUpperCase();
+    if (p === "DEF" || p === "DST") return "D/ST";
+    if (p === "BE") return "";
+    return p;
+  };
+
+  const body = (document.body && document.body.innerText) || "";
+  const draftComplete = /draft is complete|draft complete|view results/i.test(body);
+
+  const autopickOn = (() => {
+    const input = document.querySelector(".autoPick-container input.form__control--toggle, .autoPick-toggle input");
+    if (input && (input.checked || input.getAttribute("aria-checked") === "true")) return true;
+    const indicator = document.querySelector(".autoPick-container .control__indicator");
+    if (indicator) {
+      const bg = getComputedStyle(indicator).backgroundColor || "";
+      const m = bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+      if (m && (+m[2] > +m[1] + 15) && +m[2] > 90) return true;
+    }
+    return [...document.querySelectorAll(".own-pick")].some((el) =>
+      el.querySelector(".auto-word") || /\\bAUTO\\b/.test(el.innerText || "") || el.querySelector(".autopick")
+    );
+  })();
+
+  const pickArea = document.querySelector(".pickArea");
+  const pickAreaText = norm(pickArea && pickArea.innerText);
+  const bannerDraft = pickArea && pickArea.querySelector("button.Button--draft");
+  const myTurn = !!(bannerDraft && /you are on the clock/i.test(pickAreaText) && !/on the clock in/i.test(pickAreaText));
+
+  let suggestion = null;
+  const sugMatch = pickAreaText.match(/your autopick would be:\\s*(.+?)\\s*\\/\\s*(.+?)\\s+(QB|RB|WR|TE|K|D\\/ST|DST)\\b/i);
+  if (sugMatch) {
+    suggestion = { name: norm(sugMatch[1]), pos: posOf(sugMatch[3]) };
+  }
+
+  const myTeam = [];
+  const seenTeam = new Set();
+  for (const row of document.querySelectorAll(".roster .Table__TR, .roster tr")) {
+    const col = row.querySelector(".player-column");
+    const name = norm((col && col.getAttribute("title")) || "");
+    if (!name || /empty/i.test((col && col.innerText) || "")) continue;
+    const key = name.toLowerCase();
+    if (seenTeam.has(key)) continue;
+    seenTeam.add(key);
+    myTeam.push({ name, pos: posOf(row.innerText) });
+  }
+
+  const cols = [...document.querySelectorAll(".draft-columns > .draft-column")];
+  const right = cols.length ? cols[cols.length - 1] : document.querySelector(".draft-column.flex");
+  const picked = [];
+  const seenPick = new Set();
+  const pickNodes = right
+    ? right.querySelectorAll(".pick-message__container, .playerinfo__playername")
+    : [];
+  for (const el of pickNodes) {
+    const nameEl = el.classList && el.classList.contains("playerinfo__playername")
+      ? el
+      : el.querySelector(".playerinfo__playername");
+    const name = norm(nameEl && nameEl.innerText);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seenPick.has(key)) continue;
+    seenPick.add(key);
+    const posEl = (el.closest(".pick-message__container") || el.parentElement || el).querySelector(".playerinfo__playerpos");
+    picked.push({ name, pos: posOf((posEl && posEl.innerText) || el.innerText) });
+  }
+
+  return {
+    my_turn: myTurn,
+    autopick_on: autopickOn,
+    autodraft_suggestion: suggestion,
+    my_team: myTeam,
+    picked: picked,
+    draft_complete: draftComplete,
+  };
+}"""
+
+
+def _norm_name(name: str) -> str:
+    s = re.sub(r"[^a-z0-9 ]", "", (name or "").lower())
+    s = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _names_match(a: str, b: str) -> bool:
+    na, nb = _norm_name(a), _norm_name(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return na in nb or nb in na
+
+
+def _live_draft_url(draft_url: str = None, session_id: str = None) -> str:
+    raw = (draft_url or "").strip()
+    if raw:
+        return raw
+    settings = resolve_espn_settings(session_id=session_id)
+    league_id = settings.get("league_id") or ""
+    team_id = settings.get("team_id") or ""
+    season = espn_season()
+    url = f"https://fantasy.espn.com/football/draft?leagueId={league_id}&seasonId={season}"
+    if team_id:
+        url += f"&teamId={team_id}"
+    return url
+
+
+def _league_block(session_id: str = None) -> str:
+    try:
+        settings = fetch_espn_league_settings(session_id=session_id, ttl_seconds=60)
+        block = "\n\n".join(filter(None, [
+            format_league_settings_block(settings),
+            format_draft_order_block(
+                settings.get("draft_order") or [],
+                settings.get("draft_type") or "SNAKE",
+            ),
+        ]))
+        if block.strip():
+            return block
+    except Exception as e:
+        logging.warning(f"Could not refresh league settings for live draft: {e}")
+    return get_saved_league_settings_block(session_id=session_id)
+
+
+def _is_page_not_found(page) -> bool:
     try:
         title = (page.title() or "").lower()
-        if "not found" in title or "error" in title:
+        if "not found" in title:
             return True
-        return page.get_by_text("Page Not Found", exact=False).first.is_visible(timeout=1000)
+        return page.get_by_text("Page Not Found", exact=False).first.is_visible(timeout=800)
     except Exception:
         return False
 
 
-def analyze_draft_pick(available_players: list, current_roster: list, current_pick: int, league_settings_block: str = "", session_id: str = None) -> dict:
-    """Prompt DeepSeek to recommend the best available player based on VORP and team needs."""
-    guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "draft_guidance.md")
-    prompt = f"""
-    {guidance}
-
-    {league_settings_block}
-
-    It is your turn to pick in a live draft (Pick #{current_pick}).
-
-    Current Team Roster:
-    {json.dumps(current_roster, indent=2)}
-
-    Top Available Players:
-    {json.dumps(available_players[:15], indent=2)}
-
-    Analyze positional scarcity, team needs, and projected value.
-    Respond ONLY in JSON format:
-    {{
-        "recommended_player": "Player Name",
-        "position": "QB/RB/WR/TE",
-        "rationale": "Detailed explanation for why this player is the best pick."
-    }}
-    """
-    return query_local_deepseek(prompt, session_id=session_id)
-
-
-def run_live_draft_assistant(draft_url: str = None, session_id: str = None, auto_execute: bool = False):
-    """
-    Launches Playwright browser to attach to ESPN Live Draft Room, reads available
-    players, and asks DeepSeek for a pick recommendation. Nothing is drafted yet —
-    this logs a single DRAFT_PICK suggestion for review; accepting it (via
-    draft_player_via_browser / apply_accepted_draft_suggestion) is what actually
-    clicks Draft on ESPN.
-    """
-    if not draft_url:
-        draft_url = f"https://fantasy.espn.com/football/draft?leagueId={resolve_espn_settings(session_id=session_id)['league_id']}"
-
-    logging.info(f"Connecting to ESPN Live Draft Room: {draft_url}")
-    
-    with sync_playwright() as p:
-        temp_dir = os.environ.get("TEMP", "C:/tmp")
-        profile_dir = os.path.join(temp_dir, "espn_openclaw_profile")
-        
-        browser = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        
-        page = browser.new_page()
-        page.goto(draft_url)
-        page.wait_for_timeout(5000)
-
-        ensure_espn_login(page, session_id=session_id)
-
-        if _is_espn_page_not_found(page):
-            logging.error(f"ESPN returned 'Page not found' for the draft room ({draft_url}).")
-            log_system_event(
-                "ESPN_DRAFT_ROOM_NOT_FOUND",
-                "ESPN's draft room page couldn't be found — there's likely no active or scheduled draft for this league right now.",
-                {"draft_url": draft_url},
-                session_id=session_id
-            )
-            browser.close()
-            raise RuntimeError(
-                "ESPN couldn't find a draft room at that URL — there's likely no active or scheduled draft for this "
-                "league right now. Double-check your League ID in ESPN Connection, and try again once your draft has started."
-            )
-
-        # Refresh the ESPN-id/gsis-id crosswalk so player matching stays ID-based
-        # (chat's lookups reuse whatever's persisted here rather than refreshing it).
-        refresh_espn_id_crosswalk(session_id=session_id)
-
-        # League/roster settings are fixed for the season once the draft starts,
-        # so this is the only workflow that fetches them fresh from ESPN — lineup
-        # and trade just read back whatever gets saved here.
-        league_settings = fetch_espn_league_settings(session_id=session_id)
-        draft_context_block = "\n\n".join(filter(None, [
-            format_league_settings_block(league_settings),
-            format_draft_order_block(league_settings.get("draft_order", []), league_settings.get("draft_type", "SNAKE")),
-        ]))
-
-        logging.info("Scanning ESPN Draft Room for available players...")
-
-        # Scrape top available players from ESPN Draft Room DOM table
-        available_players = []
-        try:
-            player_elements = page.locator(".draftTable__row")
-            count = player_elements.count()
-            for i in range(min(count, 15)):
-                text = player_elements.nth(i).inner_text().replace("\n", " ")
-                available_players.append({"rank": i + 1, "details": text})
-        except Exception as e:
-            logging.warning(f"Could not scrape live draft table (using mock demo data): {e}")
-            available_players = [
-                {"name": "Ja'Marr Chase", "pos": "WR", "adp": 4.2},
-                {"name": "Breece Hall", "pos": "RB", "adp": 5.1},
-                {"name": "Bijan Robinson", "pos": "RB", "adp": 6.0},
-                {"name": "Amon-Ra St. Brown", "pos": "WR", "adp": 7.5}
-            ]
-
-        # Enrich available players with real prior-season stats & injury status
-        # from nfl_data_py (players without a resolvable "name" pass through unchanged).
-        season = datetime.datetime.now().year
-        available_players = enrich_players_with_stats(available_players, season=season, session_id=session_id)
-
-        current_roster = []
-        decision = analyze_draft_pick(available_players, current_roster, current_pick=12, league_settings_block=draft_context_block, session_id=session_id)
-        logging.info(f"DeepSeek Draft Pick Recommendation: {decision}")
-        
-        rec_player = decision.get("recommended_player", "Ja'Marr Chase")
-        rationale = decision.get("rationale", "Best available value player.")
-        status = "PENDING_REVIEW" if decision else "SIMULATED_FALLBACK"
-
-        # Log the recommendation for review — nothing is clicked on ESPN yet.
-        record_id = log_action(
-            week=0,  # Week 0 represents Draft
-            action_type="LIVE_DRAFT_PICK",
-            starters=[rec_player],
-            bench=[],
-            rationale=rationale,
-            status=status,
-            prompt_sent=f"Draft Pick #{current_pick} Analysis Prompt for players: {[p.get('name') for p in available_players[:5]]}",
-            raw_response=json.dumps(decision),
-            session_id=session_id
-        )
-
-        suggestion_ids = []
-        if rec_player:
-            suggestion_ids = create_suggestions(
-                record_id,
-                [{"type": "DRAFT_PICK", "player": rec_player, "detail": {"rationale": rationale, "draft_url": draft_url}}],
-                session_id=session_id
-            )
-
-        page.wait_for_timeout(3000)
-        browser.close()
-
-        if auto_execute and suggestion_ids:
-            logging.info("Automatic mode: accepting the recommended pick and drafting it immediately.")
-            update_suggestion_status(suggestion_ids[0], "ACCEPTED", session_id=session_id)
-            apply_accepted_draft_suggestion(record_id, session_id=session_id)
-
-        logging.info(f"Draft recommendation logged as Record ID: #{record_id} (awaiting review)")
-        return record_id
-
-
-def draft_player_via_browser(player_name: str, draft_url: str = None, session_id: str = None) -> bool:
-    """
-    Opens the ESPN Live Draft Room and clicks Draft/Queue for the given player.
-    Called only after a DRAFT_PICK suggestion has been accepted by the user.
-    Returns True if the button was found and clicked.
-    """
-    if not draft_url:
-        draft_url = f"https://fantasy.espn.com/football/draft?leagueId={resolve_espn_settings(session_id=session_id)['league_id']}"
-
-    logging.info(f"Attempting to draft {player_name} on ESPN UI...")
-    with sync_playwright() as p:
-        temp_dir = os.environ.get("TEMP", "C:/tmp")
-        profile_dir = os.path.join(temp_dir, "espn_openclaw_profile")
-
-        browser = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        page = browser.new_page()
-        page.goto(draft_url)
-        page.wait_for_timeout(5000)
-
-        ensure_espn_login(page, session_id=session_id)
-
-        if _is_espn_page_not_found(page):
-            logging.error(f"ESPN returned 'Page not found' for the draft room ({draft_url}) — can't draft {player_name}.")
-            log_system_event(
-                "ESPN_DRAFT_ROOM_NOT_FOUND",
-                f"ESPN's draft room page couldn't be found while trying to draft {player_name}.",
-                {"draft_url": draft_url, "player": player_name},
-                session_id=session_id
-            )
-            browser.close()
-            raise RuntimeError("ESPN couldn't find a draft room at that URL — the draft may have ended or not started.")
-
-        clicked = False
-        try:
-            player_row = page.locator(f"tr:has-text('{player_name}')")
-            if player_row.count() > 0:
-                draft_btn = player_row.locator("button:has-text('Draft'), button:has-text('Queue')")
-                if draft_btn.count() > 0:
-                    draft_btn.first.click()
-                    clicked = True
-                    logging.info(f"Draft button clicked for {player_name}!")
-                    log_system_event("BROWSER_ACTION", f"Clicked Draft/Queue for {player_name}", session_id=session_id)
-        except Exception as e:
-            logging.error(f"Could not click draft button for {player_name}: {e}")
-            log_system_event("BROWSER_ACTION_ERROR", f"Failed to draft {player_name}: {e}", session_id=session_id)
-
-        page.wait_for_timeout(2000)
-        browser.close()
-        return clicked
-
-
-def apply_accepted_draft_suggestion(action_log_id: int, session_id: str = None) -> dict:
-    """Execute the ACCEPTED DRAFT_PICK suggestion for a draft action, if any."""
-    suggestions = get_suggestions_for_action(action_log_id, session_id=session_id)
-    accepted_picks = [s for s in suggestions if s["suggestion_type"] == "DRAFT_PICK" and s["status"] == "ACCEPTED"]
-
-    if not accepted_picks:
-        update_action_status(action_log_id, "DECLINED", session_id=session_id)
-        return {"executed": 0, "player": None}
-
-    pick = accepted_picks[0]
-    draft_url = (pick.get("detail") or {}).get("draft_url")
+def _scrape(page) -> dict:
     try:
-        clicked = draft_player_via_browser(pick["player"], draft_url=draft_url, session_id=session_id)
-        update_suggestion_status(pick["id"], "EXECUTED" if clicked else "EXECUTION_FAILED", session_id=session_id)
-        update_action_status(action_log_id, "EXECUTED" if clicked else "EXECUTION_FAILED", session_id=session_id)
-        return {"executed": 1 if clicked else 0, "player": pick["player"]}
+        data = page.evaluate(_SCRAPE_JS)
     except Exception as e:
-        logging.error(f"Failed to execute accepted draft suggestion: {e}")
-        update_suggestion_status(pick["id"], "EXECUTION_FAILED", session_id=session_id)
-        update_action_status(action_log_id, "EXECUTION_FAILED", session_id=session_id)
-        raise
+        logging.warning(f"Draft scrape failed: {e}")
+        data = {}
+    return {
+        "my_turn": bool(data.get("my_turn")),
+        "autopick_on": bool(data.get("autopick_on")),
+        "autodraft_suggestion": data.get("autodraft_suggestion"),
+        "my_team": list(data.get("my_team") or []),
+        "picked": list(data.get("picked") or []),
+        "draft_complete": bool(data.get("draft_complete")),
+    }
+
+
+def _autopick_input(page):
+    return page.locator(".autoPick-container input.form__control--toggle, .autoPick-toggle input").first
+
+
+_AUTOPICK_STATE_JS = """() => {
+  const input = document.querySelector(".autoPick-container input.form__control--toggle, .autoPick-toggle input");
+  const checked = !!(input && (input.checked || input.getAttribute("aria-checked") === "true"));
+  let visualOn = false;
+  const indicator = document.querySelector(".autoPick-container .control__indicator");
+  if (indicator) {
+    const bg = getComputedStyle(indicator).backgroundColor || "";
+    const m = bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+    if (m) visualOn = (+m[2] > +m[1] + 15) && +m[2] > 90;
+  }
+  const ownAuto = [...document.querySelectorAll(".own-pick")].some((el) =>
+    el.querySelector(".auto-word")
+    || el.querySelector(".autopick")
+    || /\\bAUTO\\b/.test(el.innerText || "")
+  );
+  return { on: checked || visualOn || ownAuto, checked, visualOn, ownAuto, found: !!input };
+}"""
+
+
+def _autopick_state(page) -> dict:
+    try:
+        data = page.evaluate(_AUTOPICK_STATE_JS) or {}
+    except Exception:
+        data = {}
+    return {
+        "on": bool(data.get("on")),
+        "checked": bool(data.get("checked")),
+        "visualOn": bool(data.get("visualOn")),
+        "ownAuto": bool(data.get("ownAuto")),
+        "found": bool(data.get("found")),
+    }
+
+
+def _autopick_is_on(page) -> bool:
+    return bool(_autopick_state(page).get("on"))
+
+
+def _disable_autopick(page) -> bool:
+    """If Autopick is on right now, click it off. Returns True when a click was attempted."""
+    if not _autopick_is_on(page):
+        return False
+    targets = [
+        page.locator(".autoPick-container .control__indicator").first,
+        page.locator(".autoPick-toggle .control__indicator").first,
+        page.locator(".autoPick-container label.form__toggle").first,
+        page.locator(".autoPick-label").first,
+        _autopick_input(page),
+    ]
+    for loc in targets:
+        try:
+            if not loc.count():
+                continue
+            loc.click(timeout=1500, force=True)
+            page.wait_for_timeout(300)
+            if not _autopick_is_on(page):
+                return True
+        except Exception:
+            continue
+    try:
+        page.evaluate(
+            """() => {
+              const input = document.querySelector(".autoPick-container input.form__control--toggle, .autoPick-toggle input");
+              if (!input) return;
+              const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked");
+              if (desc && desc.set) desc.set.call(input, false);
+              else input.checked = false;
+              for (const type of ["click", "input", "change"]) {
+                input.dispatchEvent(new Event(type, { bubbles: true }));
+              }
+            }"""
+        )
+        page.wait_for_timeout(250)
+    except Exception as e:
+        logging.warning(f"Could not toggle Autopick off: {e}")
+    return True
+
+
+def _ensure_autopick_off(page, attempts: int = 6) -> bool:
+    """Re-read Autopick every attempt and click until it is actually off."""
+    try:
+        page.locator(".autoPick-container, .autoPick-toggle").first.wait_for(state="visible", timeout=8000)
+    except Exception:
+        return not _autopick_is_on(page)
+    for _ in range(max(1, attempts)):
+        if not _autopick_is_on(page):
+            return True
+        _disable_autopick(page)
+        page.wait_for_timeout(300)
+    still_on = _autopick_is_on(page)
+    if still_on:
+        logging.warning("Autopick is still on after retries.")
+    return not still_on
+
+
+def _click_banner_draft(page) -> bool:
+    try:
+        return bool(page.evaluate(
+            """() => {
+              const btn = document.querySelector(".pickArea button.Button--draft, .on-the-clock button.Button--draft");
+              if (btn) { btn.click(); return true; }
+              return false;
+            }"""
+        ))
+    except Exception as e:
+        logging.warning(f"Banner DRAFT click failed: {e}")
+        return False
+
+
+_SEARCH_MATCH_JS = """(name) => {
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+  const target = norm(name);
+  if (!target) return false;
+  const words = target.split(" ").filter((w) => w.length > 1);
+  const btns = [...document.querySelectorAll("button.player--search--match")];
+  const match = btns.find((b) => {
+    const t = norm(((b.querySelector(".playerinfo__playername") || b).innerText || ""));
+    return t === target || t.includes(target) || target.includes(t)
+      || (words.length && words.every((w) => t.includes(w)));
+  }) || btns[0];
+  if (!match) return false;
+  match.click();
+  return true;
+}"""
+
+_TABLE_ROW_DRAFT_JS = """(name) => {
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\\s+/g, " ").trim();
+  const isDraft = (b) => {
+    const text = (b.innerText || "").replace(/\\s+/g, " ").trim();
+    if (!/^DRAFT$/i.test(text)) return false;
+    if (b.disabled || b.classList.contains("Button--drafted") || b.classList.contains("Button--disabled")) return false;
+    return true;
+  };
+  const target = norm(name);
+  const words = target.split(" ").filter((w) => w.length > 1);
+  const nameEls = [...document.querySelectorAll(
+    ".draft-players .public_fixedDataTable_bodyRow .playerinfo__playername, .draft-players .fixedDataTableRowLayout_main .playerinfo__playername"
+  )].filter((el) => !el.closest(".player--search--matches, button.player--search--match"));
+  const matchEl = nameEls.find((el) => {
+    const t = norm(el.innerText);
+    return t === target || t.includes(target) || target.includes(t)
+      || (words.length && words.every((w) => t.includes(w)));
+  }) || (nameEls.length === 1 ? nameEls[0] : null);
+  if (!matchEl) return false;
+  const row = matchEl.closest(".public_fixedDataTable_bodyRow, .fixedDataTableRowLayout_main, .fixedDataTableRowLayout_rowWrapper");
+  const rowBtn = row && [...row.querySelectorAll("button.action-btn, button.Button--draft")].find(isDraft);
+  if (rowBtn) { rowBtn.click(); return true; }
+  const y = matchEl.getBoundingClientRect().top;
+  const aligned = [...document.querySelectorAll(".draft-players button.action-btn, .draft-players button.Button--draft")]
+    .filter((b) => !b.closest(".pickArea, .player--search--matches") && isDraft(b))
+    .find((b) => Math.abs(b.getBoundingClientRect().top - y) < 22);
+  if (aligned) { aligned.click(); return true; }
+  return false;
+}"""
+
+
+def _search_and_select_player(page, player_name: str) -> bool:
+    """Type in Player Name and click the matching search dropdown result."""
+    box = page.locator(
+        '.playersSearch input[placeholder="Player Name"], input[placeholder="Player Name"]'
+    )
+    if not box.count():
+        return False
+    field = box.first
+    field.click(timeout=2000)
+    field.fill("")
+    page.wait_for_timeout(80)
+    field.press_sequentially(player_name, delay=35)
+    try:
+        page.locator("button.player--search--match").first.wait_for(state="visible", timeout=2500)
+    except Exception:
+        try:
+            field.press("Enter")
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+        return False
+    return bool(page.evaluate(_SEARCH_MATCH_JS, player_name))
+
+
+def _click_table_row_draft(page, player_name: str) -> bool:
+    """Click DRAFT on the available-players row (same slot as DRAFTED when taken)."""
+    loc = page.locator(
+        ".draft-players .public_fixedDataTable_bodyRow button.action-btn, "
+        ".draft-players .fixedDataTableRowLayout_main button.action-btn"
+    ).filter(has_text=re.compile(r"^\s*DRAFT\s*$", re.I))
+    count = loc.count()
+    for i in range(count):
+        btn = loc.nth(i)
+        try:
+            if btn.is_visible() and btn.is_enabled():
+                btn.click(timeout=2000)
+                return True
+        except Exception:
+            continue
+    return bool(page.evaluate(_TABLE_ROW_DRAFT_JS, player_name))
+
+
+def _click_table_draft(page, player_name: str) -> bool:
+    try:
+        _search_and_select_player(page, player_name)
+        page.wait_for_timeout(700)
+        if _click_table_row_draft(page, player_name):
+            return True
+        logging.warning(f"No enabled table DRAFT button for {player_name}")
+        return False
+    except Exception as e:
+        logging.warning(f"Table DRAFT click failed for {player_name}: {e}")
+        return False
+
+
+_SKILL_POS = ("QB", "RB", "WR", "TE", "K", "D/ST")
+_RB_STRATEGIES = ("Hero RB", "Robust RB", "Zero RB", "Hyper-Fragile RB")
+
+
+def _merge_taken(scraped: list, session_id: str = None) -> list:
+    """
+    Taken board keyed by ESPN playerId. mDraftDetail is the source of truth;
+    IDs already seen this live-draft run are kept even if a later fetch is
+    incomplete. Names/positions are resolved and cached for the session.
+    """
+    sid = session_id or ""
+    try:
+        detail = fetch_draft_picks_detail(session_id=session_id, ttl_seconds=0)
+    except Exception:
+        detail = []
+
+    with _JOBS_LOCK:
+        job = _JOBS.get(sid) or {}
+        by_id = dict(job.get("taken_by_id") or {})
+
+    scraped_items = []
+    for item in scraped or []:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        scraped_items.append({"name": name, "pos": _norm_pos(item.get("pos") or "")})
+
+    for pick in detail or []:
+        pid = pick.get("player_id")
+        if not pid:
+            continue
+        try:
+            key = str(int(pid))
+        except (TypeError, ValueError):
+            continue
+        prev = by_id.get(key) or {}
+        name = (pick.get("name") or "").strip() or prev.get("name") or ""
+        pos = _norm_pos(pick.get("pos") or prev.get("pos") or "")
+        by_id[key] = {
+            "player_id": int(pid),
+            "name": name,
+            "pos": pos,
+            "overall": pick.get("overall") or prev.get("overall") or 0,
+            "team_id": pick.get("team_id") if pick.get("team_id") is not None else prev.get("team_id") or 0,
+        }
+
+    used_scrape = set()
+    for rec in by_id.values():
+        rec_name = (rec.get("name") or "").strip()
+        if not rec_name:
+            continue
+        for i, s in enumerate(scraped_items):
+            if i in used_scrape:
+                continue
+            if _names_match(rec_name, s["name"]):
+                if s.get("pos") and not rec.get("pos"):
+                    rec["pos"] = s["pos"]
+                used_scrape.add(i)
+                break
+
+    unnamed = sorted(
+        [rec for rec in by_id.values() if not (rec.get("name") or "").strip()],
+        key=lambda r: r.get("overall") or 0,
+        reverse=True,
+    )
+    leftover_idxs = [i for i, _s in enumerate(scraped_items) if i not in used_scrape]
+    for rec, idx in zip(unnamed, leftover_idxs):
+        s = scraped_items[idx]
+        rec["name"] = s["name"]
+        rec["pos"] = rec.get("pos") or s.get("pos") or ""
+        used_scrape.add(idx)
+
+    for rec in by_id.values():
+        if rec.get("name"):
+            remember_espn_player(session_id, rec["player_id"], rec["name"], rec.get("pos") or "")
+
+    with _JOBS_LOCK:
+        job = _JOBS.get(sid)
+        if job is not None:
+            job["taken_by_id"] = by_id
+
+    out = []
+    seen_names = set()
+    for rec in sorted(by_id.values(), key=lambda r: r.get("overall") or 0):
+        name = (rec.get("name") or "").strip()
+        if not name:
+            continue
+        key = _norm_name(name)
+        if not key or key in seen_names:
+            continue
+        seen_names.add(key)
+        out.append({"name": name, "pos": rec.get("pos") or ""})
+    for i, s in enumerate(scraped_items):
+        if i in used_scrape:
+            continue
+        key = _norm_name(s["name"])
+        if not key or key in seen_names:
+            continue
+        seen_names.add(key)
+        out.append({"name": s["name"], "pos": s.get("pos") or ""})
+    return out
+
+
+def _norm_pos(pos: str) -> str:
+    p = (pos or "").upper().strip()
+    if p in ("DST", "DEF", "D/ST"):
+        return "D/ST"
+    return p
+
+
+def _count_by_pos(players: list) -> dict:
+    counts = {k: 0 for k in _SKILL_POS}
+    for item in players or []:
+        if not isinstance(item, dict):
+            continue
+        pos = _norm_pos(item.get("pos"))
+        if pos in counts:
+            counts[pos] += 1
+    return counts
+
+
+def _parse_starter_needs(roster_settings: str) -> dict:
+    needs = {k: 0 for k in _SKILL_POS}
+    needs["FLEX"] = 0
+    needs["OP"] = 0
+    needs["BENCH"] = 0
+    for match in re.finditer(
+        r"(\d+)\s+(QB|RB|WR|TE|FLEX|OP|K|D/ST|DST|DEF|BENCH)\b",
+        roster_settings or "",
+        re.I,
+    ):
+        pos = _norm_pos(match.group(2))
+        needs[pos] = needs.get(pos, 0) + int(match.group(1))
+    return needs
+
+
+def _roster_holes(my_counts: dict, needs: dict) -> dict:
+    holes = {}
+    extras = {}
+    for pos in _SKILL_POS:
+        have = int(my_counts.get(pos) or 0)
+        need = int(needs.get(pos) or 0)
+        holes[pos] = max(0, need - have)
+        extras[pos] = max(0, have - need)
+    flex_need = int(needs.get("FLEX") or 0) + int(needs.get("OP") or 0)
+    flex_fill = extras.get("RB", 0) + extras.get("WR", 0) + extras.get("TE", 0)
+    holes["FLEX"] = max(0, flex_need - flex_fill)
+    return holes
+
+
+def _board_snapshot(picked: list, my_team: list, session_id: str = None) -> dict:
+    taken = _count_by_pos(picked)
+    roster = _count_by_pos(my_team)
+    recent = list(reversed(picked or []))[:10]
+    saved = get_league_settings(session_id=session_id) or {}
+    needs = _parse_starter_needs(saved.get("roster_settings") or "")
+    draft_order = list(saved.get("draft_order_json") or [])
+    draft_type = saved.get("draft_type") or "SNAKE"
+    team_count = len(draft_order)
+    your_slot = next((p.get("pick") for p in draft_order if p.get("is_you")), None)
+    taken_total = sum(taken.values())
+    current_overall = taken_total + 1
+    wait = snake_picks_until_next(your_slot, team_count, current_overall, draft_type) if your_slot and team_count else None
+    turn_teams = []
+    if team_count:
+        with _JOBS_LOCK:
+            cached_picks = list(((_JOBS.get(session_id or "") or {}).get("taken_by_id") or {}).values())
+        detail = cached_picks
+        if not detail:
+            try:
+                detail = fetch_draft_picks_detail(session_id=session_id, ttl_seconds=0)
+            except Exception:
+                detail = []
+        by_team = {}
+        for pick in detail or []:
+            tid = str(pick.get("team_id") or "")
+            name = (pick.get("name") or "").strip()
+            if tid and name:
+                by_team.setdefault(tid, []).append(name)
+        for row in draft_order:
+            if row.get("pick") not in (1, team_count):
+                continue
+            tid = str(row.get("team_id") or "")
+            turn_teams.append({
+                "slot": row.get("pick"),
+                "team_name": row.get("team_name") or f"Team {tid}",
+                "is_you": bool(row.get("is_you")),
+                "roster": by_team.get(tid) or [],
+            })
+    return {
+        "taken_by_pos": taken,
+        "taken_total": taken_total,
+        "current_overall_pick": current_overall,
+        "your_slot": your_slot,
+        "team_count": team_count or None,
+        "slot_band": draft_slot_band(your_slot, team_count) if your_slot and team_count else "",
+        "draft_type": draft_type,
+        "picks_until_next": wait,
+        "turn_teams": turn_teams,
+        "recent_picks": [
+            {"name": (p.get("name") if isinstance(p, dict) else ""), "pos": _norm_pos(p.get("pos") if isinstance(p, dict) else "")}
+            for p in recent
+        ],
+        "recent_by_pos": _count_by_pos(recent),
+        "roster_by_pos": roster,
+        "starter_needs": {k: v for k, v in needs.items() if v},
+        "roster_holes": _roster_holes(roster, needs),
+    }
+
+
+def _normalize_rb_strategy(value) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    lowered = text.lower()
+    if "zero" in lowered:
+        return "Zero RB"
+    if "fragile" in lowered or "hyper" in lowered:
+        return "Hyper-Fragile RB"
+    if "robust" in lowered or "heavy" in lowered:
+        return "Robust RB"
+    if "hero" in lowered:
+        return "Hero RB"
+    return text if text in _RB_STRATEGIES else ""
+
+
+_PLACEHOLDER_NAMES = {"", "player name", "string", "null", "none", "n/a", "tbd", "unknown"}
+
+
+def _coerce_pick_decision(decision) -> dict:
+    """Flatten nested DeepSeek pick JSON into a single {player, rationale, ...} dict."""
+    if not isinstance(decision, dict):
+        return {}
+    out = dict(decision)
+    for key in ("decision", "pick", "result", "recommendation", "data", "choice"):
+        inner = out.get(key)
+        if isinstance(inner, dict):
+            for k, v in inner.items():
+                if out.get(k) in (None, ""):
+                    out[k] = v
+        elif isinstance(inner, str) and inner.strip() and not out.get("player"):
+            out["player"] = inner.strip()
+    player = out.get("player")
+    if isinstance(player, dict):
+        out["player"] = (
+            player.get("name") or player.get("player") or player.get("fullName") or ""
+        )
+    return out
+
+
+def _llm_player_name(decision: dict) -> str:
+    if not isinstance(decision, dict):
+        return ""
+    for key in ("player", "recommended_player", "name", "pick", "selection"):
+        val = decision.get(key)
+        if isinstance(val, dict):
+            val = val.get("name") or val.get("player") or val.get("fullName") or ""
+        if isinstance(val, list) and val:
+            val = val[0]
+            if isinstance(val, dict):
+                val = val.get("name") or val.get("player") or ""
+        if not isinstance(val, str):
+            continue
+        name = val.strip()
+        if name and name.lower() not in _PLACEHOLDER_NAMES:
+            return name
+    return ""
+
+
+def _llm_rationale(decision: dict) -> str:
+    if not isinstance(decision, dict):
+        return ""
+    val = decision.get("rationale") or decision.get("reason") or decision.get("why") or ""
+    if isinstance(val, list):
+        val = " ".join(str(x) for x in val if x)
+    if val in (None, "string"):
+        return ""
+    return str(val).strip()
+
+
+def _name_already_taken(name: str, taken: list, my_team: list = None) -> str:
+    """Return the matching taken/roster display name if this player is off the board."""
+    if not (name or "").strip():
+        return ""
+    for src in (taken or []), (my_team or []):
+        for item in src:
+            other = (item.get("name") if isinstance(item, dict) else item) or ""
+            if _names_match(name, other):
+                return str(other).strip()
+    return ""
+
+
+def _ask_pick(
+    picked: list,
+    my_team: list,
+    suggestion: Optional[dict],
+    league_block: str,
+    session_id: str = None,
+    prior_strategy: str = "",
+    rejected: list = None,
+    blank_retry: bool = False,
+):
+    guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "live_draft_guidance.md")
+    sug = suggestion if isinstance(suggestion, dict) else None
+    snapshot = _board_snapshot(picked, my_team, session_id=session_id)
+    rejected_names = [n for n in (rejected or []) if n]
+    rejected_block = ""
+    if rejected_names:
+        rejected_block = f"""
+HARD CONSTRAINT: These players are already drafted. Do not name them. Pick a different player who is still available.
+{json.dumps(rejected_names, ensure_ascii=False)}
+"""
+    if blank_retry:
+        rejected_block += """
+HARD CONSTRAINT: Your previous reply had an empty "player". Set "player" to one real available name and put the why in "rationale". If unsure, use the Autodraft suggestion and set use_autodraft true.
+"""
+    prompt = f"""
+{guidance}
+
+DECISION: name exactly one player to draft right now. That player must not be on TAKEN PLAYERS or CURRENT ROSTER. Prefer the Autodraft suggestion when it is a sound pick. Use pick slot (early/middle/late), taken players, current roster, and board snapshot for scarcity, runs, and the wait until the next pick. Choose Hero RB, Robust RB, Zero RB, or Hyper-Fragile RB and stick with it unless a run or the slot guidelines make a pivot clearly better.
+
+DATA YOU WILL RECEIVE:
+1. LEAGUE SETTINGS — plain text with Format, Roster, and Draft Order (your slot and the turn).
+2. TAKEN PLAYERS — JSON array of {{name, pos}} already drafted by anyone.
+3. CURRENT ROSTER — JSON array of {{name, pos}} already on this team.
+4. AUTODRAFT SUGGESTION — JSON object {{name, pos}} or null.
+5. BOARD SNAPSHOT — taken/roster counts, your slot band, picks until next, turn-team rosters, remaining starter holes.
+6. PRIOR RB STRATEGY — from an earlier pick this draft, or none yet.
+
+REPLY FORMAT — JSON object only:
+{{"player": "Player Name", "pos": "RB", "use_autodraft": false, "rb_strategy": "Hero RB", "rationale": "string"}}
+
+---
+
+{league_block}
+
+TAKEN PLAYERS:
+{json.dumps(picked, ensure_ascii=False)}
+
+CURRENT ROSTER:
+{json.dumps(my_team, ensure_ascii=False)}
+
+AUTODRAFT SUGGESTION:
+{json.dumps(sug, ensure_ascii=False)}
+
+BOARD SNAPSHOT:
+{json.dumps(snapshot, ensure_ascii=False)}
+
+PRIOR RB STRATEGY:
+{prior_strategy or "none yet"}
+{rejected_block}
+"""
+    parsed = _coerce_pick_decision(query_local_deepseek(prompt, session_id=session_id, timeout=75) or {})
+    return parsed, prompt.strip()
+
+
+def _job_snapshot(session_id: str) -> dict:
+    with _JOBS_LOCK:
+        job = _JOBS.get(session_id or "") or {}
+    return {
+        "running": bool(job.get("running")),
+        "message": job.get("message") or "",
+        "last_pick": job.get("last_pick") or "",
+        "picks": int(job.get("picks") or 0),
+        "rb_strategy": job.get("rb_strategy") or "",
+        "error": job.get("error") or "",
+        "draft_url": job.get("draft_url") or "",
+    }
+
+
+def _set_job(session_id: str, **kwargs):
+    key = session_id or ""
+    with _JOBS_LOCK:
+        job = _JOBS.setdefault(key, {
+            "running": False,
+            "stop": threading.Event(),
+            "message": "",
+            "last_pick": "",
+            "picks": 0,
+            "rb_strategy": "",
+            "error": "",
+            "draft_url": "",
+            "taken_by_id": {},
+        })
+        job.update(kwargs)
+
+
+def live_draft_status(session_id: str = None) -> dict:
+    return _job_snapshot(session_id)
+
+
+def stop_live_draft(session_id: str = None) -> dict:
+    _set_job(session_id, message="Stopping…")
+    with _JOBS_LOCK:
+        job = _JOBS.get(session_id or "")
+        if job and job.get("stop"):
+            job["stop"].set()
+    return _job_snapshot(session_id)
+
+
+def start_live_draft(draft_url: str = None, session_id: str = None) -> dict:
+    """Start a background live/mock draft loop. Returns current status."""
+    key = session_id or ""
+    with _JOBS_LOCK:
+        existing = _JOBS.get(key)
+        if existing and existing.get("running"):
+            raise RuntimeError("A live draft is already running for this session. Stop it first.")
+        stop = threading.Event()
+        _JOBS[key] = {
+            "running": True,
+            "stop": stop,
+            "message": "Starting draft room…",
+            "last_pick": "",
+            "picks": 0,
+            "rb_strategy": "",
+            "error": "",
+            "draft_url": (draft_url or "").strip(),
+            "taken_by_id": {},
+        }
+    thread = threading.Thread(
+        target=_live_draft_thread,
+        kwargs={"draft_url": draft_url, "session_id": session_id},
+        daemon=True,
+        name=f"live-draft-{key or 'default'}",
+    )
+    thread.start()
+    return _job_snapshot(session_id)
+
+
+def _live_draft_thread(draft_url: str = None, session_id: str = None):
+    try:
+        run_live_draft_loop(draft_url=draft_url, session_id=session_id)
+    except Exception as e:
+        logging.exception("Live draft stopped with error")
+        _set_job(session_id, running=False, error=str(e), message=str(e))
+        log_system_event("LIVE_DRAFT_ERROR", str(e), {"error": str(e)}, session_id=session_id)
+
+
+@playwright_sync
+def run_live_draft_loop(draft_url: str = None, session_id: str = None):
+    url = _live_draft_url(draft_url, session_id=session_id)
+    _set_job(session_id, draft_url=url, message="Opening ESPN draft room…", error="")
+    league_block = _league_block(session_id=session_id)
+    if not league_block.strip():
+        raise RuntimeError(
+            "League settings are missing. Run Setup Draft Strategy once, or save League ID / Team ID under ESPN Connection."
+        )
+
+    log_system_event("LIVE_DRAFT_START", f"Opening draft room {url}", {"draft_url": url}, session_id=session_id)
+    stop = None
+    with _JOBS_LOCK:
+        stop = (_JOBS.get(session_id or "") or {}).get("stop")
+
+    with sync_playwright() as p:
+        profile_dir = os.path.join(os.environ.get("TEMP", "C:/tmp"), "espn_openclaw_profile")
+        browser = p.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        try:
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            page.wait_for_timeout(4000)
+            ensure_espn_login(page, session_id=session_id)
+
+            if _is_page_not_found(page):
+                raise RuntimeError(
+                    "ESPN couldn't find a draft room at that URL. Check the live/mock link and that the draft has started."
+                )
+
+            _set_job(session_id, message="Turning Autopick off…")
+            if _ensure_autopick_off(page):
+                log_system_event("LIVE_DRAFT_AUTOPICK_OFF", "Autopick is off", session_id=session_id)
+            _set_job(session_id, message="Waiting for your turn (watching Autopick)…")
+            idle_rounds = 0
+            while True:
+                if stop and stop.is_set():
+                    _set_job(session_id, running=False, message="Stopped.")
+                    break
+
+                if _autopick_is_on(page):
+                    _set_job(session_id, message="Autopick came on — turning it off…")
+                    _disable_autopick(page)
+                    page.wait_for_timeout(250)
+                    if not _autopick_is_on(page):
+                        log_system_event("LIVE_DRAFT_AUTOPICK_OFF", "Autopick was on; turned it off", session_id=session_id)
+                        continue
+
+                state = _scrape(page)
+                if state["draft_complete"]:
+                    _set_job(session_id, running=False, message="Draft complete.")
+                    log_system_event("LIVE_DRAFT_COMPLETE", "Draft room reports complete", session_id=session_id)
+                    break
+
+                if not state["my_turn"]:
+                    idle_rounds += 1
+                    _set_job(session_id, message="Waiting for your turn…")
+                    page.wait_for_timeout(400)
+                    if idle_rounds > 30000:  # ~3.3 hours at 400ms
+                        _set_job(session_id, running=False, message="Timed out waiting for picks.")
+                        break
+                    continue
+
+                idle_rounds = 0
+                if _autopick_is_on(page):
+                    _ensure_autopick_off(page, attempts=4)
+                suggestion = state.get("autodraft_suggestion") or {}
+                sug_name = (suggestion.get("name") or "").strip()
+                taken = _merge_taken(state["picked"], session_id=session_id)
+
+                with _JOBS_LOCK:
+                    prior_strategy = ((_JOBS.get(session_id or "") or {}).get("rb_strategy") or "")
+
+                rejected = []
+                taken_attempts = []
+                decision = {}
+                prompt_sent = ""
+                llm_player = ""
+                blank_replies = 0
+                max_llm_tries = 3
+                for try_n in range(max_llm_tries):
+                    if stop and stop.is_set():
+                        break
+                    if try_n > 0:
+                        state = _scrape(page)
+                        suggestion = state.get("autodraft_suggestion") or {}
+                        sug_name = (suggestion.get("name") or "").strip()
+                        taken = _merge_taken(state["picked"], session_id=session_id)
+                    if try_n == 0:
+                        msg = "Your turn — asking DeepSeek…"
+                    elif rejected:
+                        msg = f"{rejected[-1]} is taken — asking DeepSeek again…"
+                    else:
+                        msg = "Blank DeepSeek pick — asking again…"
+                    _set_job(session_id, message=msg)
+                    decision, prompt_sent = _ask_pick(
+                        taken,
+                        state["my_team"],
+                        suggestion or None,
+                        league_block,
+                        session_id=session_id,
+                        prior_strategy=prior_strategy,
+                        rejected=rejected,
+                        blank_retry=blank_replies > 0,
+                    )
+                    llm_player = _llm_player_name(decision)
+                    hit = _name_already_taken(llm_player, taken, state["my_team"])
+                    taken_attempts.append({
+                        "player": llm_player,
+                        "already_taken": bool(hit),
+                        "blank": not bool(llm_player),
+                        "matched_taken": hit,
+                    })
+                    if not llm_player:
+                        blank_replies += 1
+                        logging.warning("Live draft: DeepSeek returned a blank player; re-prompting")
+                        continue
+                    if hit:
+                        logging.warning(
+                            f"Live draft: DeepSeek named taken player {llm_player} (matched {hit}); re-prompting"
+                        )
+                        if llm_player not in rejected:
+                            rejected.append(llm_player)
+                        continue
+                    break
+
+                if stop and stop.is_set():
+                    _set_job(session_id, running=False, message="Stopped.")
+                    break
+
+                deepseek_player = llm_player or next(
+                    (a.get("player") or "" for a in reversed(taken_attempts) if a.get("player")),
+                    "",
+                )
+                still_taken = bool(llm_player and _name_already_taken(llm_player, taken, state["my_team"]))
+                if still_taken:
+                    logging.warning(
+                        f"Live draft: DeepSeek still naming taken player {llm_player} after {len(taken_attempts)} tries"
+                    )
+                    llm_player = ""
+
+                llm_use_auto = bool(decision.get("use_autodraft")) if isinstance(decision, dict) else False
+                llm_rationale = _llm_rationale(decision)
+                rb_strategy = _normalize_rb_strategy(
+                    (decision.get("rb_strategy") or decision.get("strategy") if isinstance(decision, dict) else "")
+                    or prior_strategy
+                )
+                matched_autodraft = bool(sug_name and llm_player and _names_match(llm_player, sug_name))
+                if not llm_player and not sug_name:
+                    logging.warning("Live draft: no player from DeepSeek and no Autodraft suggestion.")
+                    page.wait_for_timeout(2000)
+                    continue
+
+                if _autopick_is_on(page):
+                    _ensure_autopick_off(page, attempts=4)
+
+                try_banner_first = llm_use_auto or matched_autodraft or not llm_player
+                draft_target = sug_name if try_banner_first else llm_player
+                _set_job(session_id, message=f"Drafting {draft_target or llm_player}…")
+
+                clicked = False
+                via = "none"
+                miss_reasons = []
+                drafted = ""
+                if rejected:
+                    miss_reasons.append(
+                        "DeepSeek first named taken player"
+                        + ("s " if len(rejected) > 1 else " ")
+                        + ", ".join(f"'{n}'" for n in rejected)
+                        + ("." if llm_player else "; no available replacement, falling back to Autodraft.")
+                    )
+                if blank_replies and not llm_player:
+                    miss_reasons.append(
+                        f"DeepSeek returned a blank player on {blank_replies} attempt"
+                        + ("s." if blank_replies != 1 else ".")
+                    )
+
+                if try_banner_first:
+                    clicked = _click_banner_draft(page)
+                    if clicked:
+                        via = "banner"
+                        drafted = sug_name or llm_player
+                    else:
+                        miss_reasons.append("Banner DRAFT click failed for the Autodraft suggestion.")
+                if not clicked and llm_player:
+                    clicked = _click_table_draft(page, llm_player)
+                    if clicked:
+                        via = "table"
+                        drafted = llm_player
+                    else:
+                        miss_reasons.append(
+                            f"Could not find or click DRAFT for DeepSeek pick '{llm_player}' in the available-players table."
+                        )
+                if not clicked and sug_name:
+                    clicked = _click_banner_draft(page)
+                    if clicked:
+                        via = "banner-fallback"
+                        drafted = sug_name
+                        if llm_player and not matched_autodraft:
+                            miss_reasons.append(
+                                f"Fell back to Autodraft '{sug_name}' because DeepSeek's '{llm_player}' could not be drafted."
+                            )
+                        elif not miss_reasons:
+                            miss_reasons.append(
+                                "First Autodraft banner click failed; fallback banner click succeeded."
+                            )
+                if not drafted:
+                    drafted = sug_name or llm_player
+
+                used_autodraft = via.startswith("banner")
+                why_not_picked = " ".join(miss_reasons).strip()
+                rationale = llm_rationale or (
+                    "Took Autodraft suggestion." if used_autodraft else f"Drafted {drafted}."
+                )
+                if rb_strategy and rb_strategy.lower() not in rationale.lower():
+                    rationale = f"{rb_strategy}: {rationale}"
+                if used_autodraft and not rationale.lower().startswith("autodraft"):
+                    rationale = f"Autodraft: {rationale}"
+                if llm_player and drafted and not _names_match(llm_player, drafted):
+                    rationale = f"{rationale} DeepSeek wanted {llm_player}."
+                if why_not_picked:
+                    rationale = f"{rationale} {why_not_picked}"
+
+                bench = [via]
+                if rb_strategy:
+                    bench.append(rb_strategy)
+                if deepseek_player:
+                    bench.append(f"DeepSeek: {deepseek_player}")
+                if why_not_picked:
+                    bench.append(why_not_picked)
+
+                log_action(
+                    week=0,
+                    action_type="LIVE_DRAFT_PICK",
+                    starters=[drafted],
+                    bench=bench,
+                    rationale=rationale,
+                    status="EXECUTED" if clicked else "EXECUTION_FAILED",
+                    prompt_sent=prompt_sent,
+                    raw_response=json.dumps({
+                        "deepseek": {
+                            "player": deepseek_player,
+                            "use_autodraft": llm_use_auto,
+                            "rb_strategy": rb_strategy,
+                            "rationale": llm_rationale,
+                        },
+                        "autodraft_suggestion": suggestion,
+                        "name_matched_autodraft": matched_autodraft,
+                        "drafted": drafted,
+                        "use_autodraft": used_autodraft,
+                        "via": via,
+                        "clicked": clicked,
+                        "why_not_picked": why_not_picked,
+                        "rejected_taken": rejected,
+                        "taken_attempts": taken_attempts,
+                    }, ensure_ascii=False),
+                    session_id=session_id,
+                )
+                if clicked:
+                    with _JOBS_LOCK:
+                        job = _JOBS.get(session_id or "") or {}
+                        job["picks"] = int(job.get("picks") or 0) + 1
+                        job["last_pick"] = drafted
+                        job["rb_strategy"] = rb_strategy
+                        job["message"] = (
+                            f"Picked {drafted}"
+                            + (f" ({rb_strategy})" if rb_strategy else "")
+                            + ". Waiting for next turn…"
+                        )
+                    page.wait_for_timeout(2500)
+                    for _ in range(20):
+                        if stop and stop.is_set():
+                            break
+                        nxt = _scrape(page)
+                        if not nxt["my_turn"]:
+                            break
+                        page.wait_for_timeout(500)
+                else:
+                    _set_job(session_id, message=f"Could not click DRAFT for {llm_player or drafted}.")
+                    page.wait_for_timeout(2000)
+        finally:
+            browser.close()
+
+    _set_job(session_id, running=False)
+    if not (_job_snapshot(session_id).get("message")):
+        _set_job(session_id, message="Draft assistant finished.")
+
+
+def run_live_draft_assistant(draft_url: str = None, session_id: str = None):
+    """Start the live/mock draft loop. Picks are always executed in-room."""
+    return start_live_draft(draft_url=draft_url, session_id=session_id)

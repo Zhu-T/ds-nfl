@@ -37,26 +37,35 @@ def run_lineup_optimizer_workflow(session_id: str = None, auto_execute: bool = F
     refresh_espn_id_crosswalk(session_id=session_id)
 
     # Enrich the ESPN roster (who's on your team / starter-bench slots) with real
-    # player performance & injury data from nfl_data_py, instead of ESPN's stats.
+    # player performance & injury data from nflreadpy, instead of ESPN's stats.
     season = datetime.datetime.now().year
     roster_data["players"] = enrich_players_with_stats(roster_data.get("players", []), season=season, session_id=session_id)
-    log_system_event("NFL_DATA_ENRICHED", f"Enriched {len(roster_data['players'])} players with nfl_data_py stats/injuries for season {season}", session_id=session_id)
+    log_system_event("NFL_DATA_ENRICHED", f"Enriched {len(roster_data['players'])} players with nflreadpy stats/injuries for season {season}", session_id=session_id)
 
     guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "lineup_guidance.md")
     league_settings_block = get_saved_league_settings_block(session_id=session_id)
     prompt = f"""
-    {guidance}
+{guidance}
 
-    {league_settings_block}
+DECISION: set this week's starting lineup vs bench.
 
-    Review this roster data (recent stats, multi-season history, & injury status sourced from nflverse/nfl_data_py)
-    and output JSON indicating which players should start or be benched.
+DATA YOU WILL RECEIVE:
+1. LEAGUE SETTINGS — plain text with Format and Roster lines.
+2. ROSTER DATA — JSON object:
+   {{"week": int, "team_id": int|string, "players": [player, ...]}}
+   Each player typically includes:
+   {{"name": string, "pos": string, "status": "ACTIVE"|"BENCH"|"IR", "lineup_slot": string, "recent_stats": object|null, "season_stats_by_year": [object], "injury_status": string}}
 
-    JSON schema: {{"starters": ["Player A"], "bench": ["Player B"], "rationale": "Explanation here"}}
+REPLY FORMAT — JSON object only:
+{{"starters": ["Player A"], "bench": ["Player B"], "rationale": "string"}}
 
-    Roster Data:
-    {json.dumps(roster_data, indent=2)}
-    """
+---
+
+{league_settings_block}
+
+ROSTER DATA:
+{json.dumps(roster_data, indent=2)}
+"""
     
     log_system_event("LLM_PROMPT_SENT", f"Sending roster evaluation prompt to DeepSeek for Week {current_week}", session_id=session_id)
     decisions = query_local_deepseek(prompt, session_id=session_id)
@@ -116,9 +125,15 @@ def apply_accepted_lineup_suggestions(action_log_id: int, session_id: str = None
         execute_roster_changes_browser({"starters": players}, session_id=session_id)
         for s in accepted_starts:
             update_suggestion_status(s["id"], "EXECUTED", session_id=session_id)
-        all_reviewed = all(s["status"] != "PENDING" for s in suggestions)
-        new_status = "EXECUTED" if len(accepted_starts) == len(suggestions) else "PARTIALLY_EXECUTED"
-        update_action_status(action_log_id, new_status if all_reviewed else "PARTIALLY_EXECUTED", session_id=session_id)
+        # Re-read so rollup reflects EXECUTED vs still-PENDING siblings.
+        suggestions = get_suggestions_for_action(action_log_id, session_id=session_id)
+        pending_left = any(s["status"] == "PENDING" for s in suggestions)
+        accepted_left = any(s["status"] == "ACCEPTED" for s in suggestions)
+        if pending_left or accepted_left:
+            new_status = "PARTIALLY_EXECUTED"
+        else:
+            new_status = "EXECUTED"
+        update_action_status(action_log_id, new_status, session_id=session_id)
         return {"executed": len(players), "players": players}
     except Exception as e:
         logging.error(f"Failed to execute accepted lineup suggestions: {e}")

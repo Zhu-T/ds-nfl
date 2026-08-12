@@ -22,24 +22,24 @@ def test_playwright():
     except Exception as e:
         print(f"  [FAILED] Playwright error: {e}")
 
-def test_nfl_data_py():
-    print("Testing nfl_data_py (nflverse player stats source)...")
+def test_nflreadpy():
+    print("Testing nflreadpy (nflverse player stats source)...")
     try:
-        import nfl_data_py as nfl
-        import datetime
-        year = datetime.datetime.now().year
+        import nflreadpy as nfl
+        year = int(nfl.get_current_season())
         while year > 1999:
             try:
-                df = nfl.import_weekly_data([year])
-                print(f"  [SUCCESS] nfl_data_py reachable. Loaded {len(df)} weekly rows for {year}.")
+                df = nfl.load_player_stats([year], summary_level="week").to_pandas()
+                print(f"  [SUCCESS] nflreadpy reachable. Loaded {len(df)} weekly rows for {year} (pandas).")
                 return
             except Exception:
                 year -= 1
-        print("  [WARNING] nfl_data_py is installed but no season data could be fetched.")
+        print("  [WARNING] nflreadpy is installed but no season data could be fetched.")
     except ImportError:
-        print("  [FAILED] nfl_data_py is not installed. Run: python -m pip install nfl_data_py")
+        print("  [FAILED] nflreadpy is not installed. Run: python -m pip install nflreadpy pyarrow")
     except Exception as e:
-        print(f"  [FAILED] nfl_data_py error: {e}")
+        print(f"  [FAILED] nflreadpy error: {e}")
+
 
 def test_ollama():
     print("Testing connection to local DeepSeek (Ollama) server at http://localhost:11434...")
@@ -61,5 +61,5 @@ if __name__ == "__main__":
     print("")
     test_ollama()
     print("")
-    test_nfl_data_py()
+    test_nflreadpy()
     print("---------------------------------")

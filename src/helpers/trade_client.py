@@ -6,7 +6,13 @@ from src.helpers.db_manager import (
     create_suggestions, get_suggestions_for_action, update_suggestion_status, update_action_status,
 )
 from src.helpers.prompt_loader import load_guidance
-from src.helpers.espn_client import get_saved_league_settings_block, resolve_espn_settings, fetch_espn_with_reauth
+from src.helpers.espn_client import (
+    get_saved_league_settings_block,
+    resolve_espn_settings,
+    fetch_espn_with_reauth,
+    league_api_url,
+    request_cookies,
+)
 from src.helpers.nfl_data_client import refresh_espn_id_crosswalk
 
 
@@ -16,8 +22,8 @@ def fetch_pending_trades_via_api(ttl_seconds: int = 300, session_id: str = None)
     Uses view=mTransactions2 & view=mPendingTransactions.
     """
     settings = resolve_espn_settings(session_id=session_id)
-    url = f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ff/seasons/2026/segments/0/leagues/{settings['league_id']}?view=mTransactions2&view=mPendingTransactions"
-    cookies = {"espn_s2": settings["espn_s2"], "SWID": settings["swid"]}
+    url = league_api_url(settings["league_id"], "mTransactions2") + "&view=mPendingTransactions"
+    cookies = request_cookies(settings)
 
     try:
         data = fetch_espn_with_reauth(url, cookies, ttl_seconds, session_id=session_id)
@@ -44,23 +50,26 @@ def analyze_trade_proposal(trade: dict, session_id: str = None) -> dict:
     guidance = load_guidance("system_guidance.md", "trade_guidance.md")
     league_settings_block = get_saved_league_settings_block(session_id=session_id)
     prompt = f"""
-    {guidance}
+{guidance}
 
-    {league_settings_block}
+DECISION: recommend ACCEPT, DECLINE, or COUNTER for this pending trade.
 
-    Evaluate the following pending trade offer for your team:
+DATA YOU WILL RECEIVE:
+1. LEAGUE SETTINGS — plain text with Format and Roster lines.
+2. TRADE OFFER — JSON object. Typical fields:
+   {{"id": string, "proposing_team": string, "receiving_team": string, "players_giving_up": [player], "players_receiving": [player], "status": string}}
+   Player objects include "name", "pos", and may include projected points.
 
-    Trade Offer Details:
-    {json.dumps(trade, indent=2)}
+REPLY FORMAT — JSON object only:
+{{"recommendation": "ACCEPT"|"DECLINE"|"COUNTER", "net_value_diff": "string", "rationale": "string"}}
 
-    Analyze Rest-of-Season (ROS) value, positional depth, and overall roster impact.
-    Respond ONLY in JSON format:
-    {{
-        "recommendation": "ACCEPT / DECLINE / COUNTER",
-        "net_value_diff": "+2.4 projected pts/week",
-        "rationale": "Detailed explanation of why to accept or decline this trade offer."
-    }}
-    """
+---
+
+{league_settings_block}
+
+TRADE OFFER:
+{json.dumps(trade, indent=2)}
+"""
     log_system_event("LLM_PROMPT_SENT", f"Sending pending trade {trade.get('id', 'trade')} to DeepSeek model", session_id=session_id)
     return query_local_deepseek(prompt, session_id=session_id)
 
@@ -128,5 +137,12 @@ def apply_trade_suggestions(action_log_id: int, session_id: str = None) -> dict:
     for s in accepted:
         update_suggestion_status(s["id"], "EXECUTED", session_id=session_id)
 
-    update_action_status(action_log_id, "EXECUTED" if accepted else "DECLINED", session_id=session_id)
+    suggestions = get_suggestions_for_action(action_log_id, session_id=session_id)
+    pending_left = any(s["status"] == "PENDING" for s in suggestions)
+    if not accepted and not pending_left:
+        update_action_status(action_log_id, "DECLINED", session_id=session_id)
+    elif pending_left:
+        update_action_status(action_log_id, "PARTIALLY_EXECUTED", session_id=session_id)
+    else:
+        update_action_status(action_log_id, "EXECUTED", session_id=session_id)
     return {"executed": len(accepted)}
