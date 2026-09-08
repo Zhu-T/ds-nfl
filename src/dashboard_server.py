@@ -113,6 +113,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(200, {
                 "league_id": saved.get("league_id"),
                 "team_id": saved.get("team_id"),
+                "lineup_url": saved.get("lineup_url"),
                 "espn_s2_set": bool(saved.get("espn_s2")),
                 "swid_set": bool(saved.get("swid")),
             })
@@ -179,11 +180,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 team_id = (body.get("team_id") or "").strip() or None
                 espn_s2 = (body.get("espn_s2") or "").strip() or None
                 swid = (body.get("swid") or "").strip() or None
-                result = save_espn_settings(league_id=league_id, team_id=team_id, espn_s2=espn_s2, swid=swid, session_id=session_id)
+                lineup_url = (body.get("lineup_url") or "").strip() or None
+                result = save_espn_settings(
+                    league_id=league_id,
+                    team_id=team_id,
+                    espn_s2=espn_s2,
+                    swid=swid,
+                    lineup_url=lineup_url,
+                    session_id=session_id,
+                )
                 self._send_json(200, {
                     "status": "success",
                     "league_id": result["league_id"],
                     "team_id": result["team_id"],
+                    "lineup_url": result.get("lineup_url"),
                     "espn_s2_set": bool(result["espn_s2"]),
                     "swid_set": bool(result["swid"]),
                 })
@@ -221,10 +231,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(400, {"status": "error", "message": str(e)})
             return
 
-        # Lineup Optimizer Trigger
+        # Lineup Optimizer Trigger — roster is scraped from the pasted team page.
         if parsed_path.path in ["/api/run-lineup-optimizer", "/api/run-picker"]:
             try:
-                record_id = run_lineup_optimizer_workflow(session_id=session_id, auto_execute=auto_execute)
+                body = self._read_json_body()
+                lineup_url = (
+                    (query.get("lineup_url", [None])[0] or "").strip()
+                    or (body.get("lineup_url") or "").strip()
+                )
+                if not lineup_url:
+                    self._send_json(400, {
+                        "status": "error",
+                        "message": "Paste an ESPN team page URL first.",
+                    })
+                    return
+                record_id = run_lineup_optimizer_workflow(
+                    session_id=session_id,
+                    auto_execute=auto_execute,
+                    lineup_url=lineup_url,
+                )
                 self._send_json(200, {
                     "status": "success",
                     "message": "Lineup set automatically." if auto_execute else "Lineup suggestions ready for review.",
@@ -279,19 +304,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(500, {"status": "error", "message": str(e)})
             return
 
-        # Live / mock draft: always automatic (Suggest/Auto does not apply).
+        # Live or mock draft room: always automatic. The pasted link is the room.
         if parsed_path.path == "/api/run-live-draft":
             try:
                 body = self._read_json_body()
                 draft_url = (
                     (query.get("draft_url", [None])[0] or "").strip()
                     or (body.get("draft_url") or "").strip()
-                    or None
                 )
+                if not draft_url:
+                    self._send_json(400, {
+                        "status": "error",
+                        "message": "Paste an ESPN live or mock draft URL first.",
+                    })
+                    return
                 status = start_live_draft(draft_url=draft_url, session_id=session_id)
                 self._send_json(200, {
                     "status": "success",
-                    "message": "Live draft started. Picks will be made automatically on your turn.",
+                    "message": "Draft room opened. Picks will be made automatically on your turn.",
                     **status,
                 })
             except Exception as e:

@@ -100,19 +100,15 @@
                 <section class="play-group" id="draft-night-group">
                     <div class="play-card draft-join-card" id="draft-join-card" style="--play-color: var(--pos-wr)">
                         <button type="button" class="draft-join-main" id="btn-live-draft" onclick="triggerDraftNight()">
-                            <span class="play-card-icon" id="draft-join-icon">📡</span>
+                            <span class="play-card-icon">📡</span>
                             <span>
-                                <span class="play-card-title" id="draft-join-title" style="display:block">Join Live Draft</span>
-                                <span class="play-card-desc" id="draft-join-desc">Open your ESPN draft room and pick automatically.</span>
+                                <span class="play-card-title" style="display:block">Join Draft</span>
+                                <span class="play-card-desc">Paste a live or mock room link, then join. Picks run automatically.</span>
                             </span>
                         </button>
-                        <div class="mode-toggle draft-kind-toggle" role="group" aria-label="Live or mock draft">
-                            <button type="button" class="mode-btn active" id="draft-kind-live" onclick="setDraftKind('live')">Live</button>
-                            <button type="button" class="mode-btn" id="draft-kind-mock" onclick="setDraftKind('mock')">Mock</button>
-                        </div>
-                        <label class="draft-url-field hidden" id="mock-draft-url-field" for="mock-draft-url">
-                            <span>Mock draft link</span>
-                            <input type="url" id="mock-draft-url" placeholder="Paste ESPN mock draft URL" autocomplete="off">
+                        <label class="draft-url-field" id="draft-url-field" for="draft-url">
+                            <span>Draft link</span>
+                            <input type="url" id="draft-url" placeholder="Paste ESPN live or mock draft URL" autocomplete="off">
                         </label>
                     </div>
                     <button type="button" class="btn btn-stop-draft hidden" id="btn-stop-draft" onclick="stopLiveDraft()">Stop draft</button>
@@ -131,7 +127,7 @@
                         <span class="play-card-icon">🏈</span>
                         <span>
                             <span class="play-card-title" style="display:block">Set Lineup</span>
-                            <span class="play-card-desc">Starters vs bench for this week, using stats and injuries.</span>
+                            <span class="play-card-desc">Open your team page, then pick starters vs bench.</span>
                         </span>
                     </button>
                     <button class="play-card" id="btn-trade" style="--play-color: var(--pos-te)" onclick="triggerTradeAnalyzer()">
@@ -158,6 +154,10 @@
                         <input type="text" id="espn-team-id-input" placeholder="Team ID" autocomplete="off">
                     </label>
                     <label>
+                        <span>Team page link</span>
+                        <input type="url" id="lineup-url" placeholder="Paste ESPN team page URL" autocomplete="off">
+                    </label>
+                    <label>
                         <span>espn_s2 cookie</span>
                         <input type="password" id="espn-s2-input" placeholder="espn_s2 cookie" autocomplete="off">
                     </label>
@@ -172,7 +172,7 @@
 
             <div class="playsheet-footer">
                 <div class="field-divider" style="margin-bottom: 0.85rem;"></div>
-                <p>Draft strategy writes Autopick to ESPN. Live/mock draft always picks for you. Lineup and trades follow Suggest or Auto.</p>
+                <p>Draft strategy writes Autopick to ESPN. Draft night always picks for you from the pasted room link. Lineup and trades follow Suggest or Auto.</p>
             </div>
         </aside>
 

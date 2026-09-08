@@ -930,6 +930,95 @@ def get_saved_league_settings_block(session_id: str = None) -> str:
     ]))
 
 
+_TEAM_LINEUP_JS = """() => {
+  const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
+  const rows = [...document.querySelectorAll(".players-table .Table__TR, .players-table tr")];
+  const weekMatch = ((document.body && document.body.innerText) || "").match(/NFL WEEK\\s+(\\d+)/i);
+  const players = [];
+  const seen = new Set();
+  for (const tr of rows) {
+    const text = norm(tr.innerText);
+    if (!text || /^TOTALS\\b/i.test(text) || /^SLOT\\b/i.test(text) || /^STARTERS\\b/i.test(text)) continue;
+    const nameEl = tr.querySelector(".player__column[title], .player-column__athlete[title]");
+    const name = norm(nameEl && nameEl.getAttribute("title"));
+    if (!name || /^empty$/i.test(name)) continue;
+    const slot = (text.split(" ")[0] || "").toUpperCase();
+    const posEl = tr.querySelector(".playerinfo__playerpos");
+    const pos = norm(posEl && posEl.innerText).toUpperCase();
+    let status = "ACTIVE";
+    if (slot === "BENCH") status = "BENCH";
+    else if (slot === "IR") status = "IR";
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    players.push({
+      name,
+      pos: pos || "",
+      lineup_slot: slot,
+      status,
+    });
+  }
+  return {
+    week: weekMatch ? Number(weekMatch[1]) : null,
+    players,
+  };
+}"""
+
+
+@playwright_sync
+def scrape_lineup_from_team_page(team_url: str, session_id: str = None) -> dict:
+    """
+    Open an ESPN team clubhouse URL and read starters, bench, and IR from the page.
+    Starters are slot rows (QB/RB/…); bench rows are labeled Bench.
+    """
+    url = (team_url or "").strip()
+    if not url:
+        raise ValueError("Paste an ESPN team page URL first.")
+
+    log_system_event("LINEUP_SCRAPE_START", f"Opening team page {url}", {"team_url": url}, session_id=session_id)
+    with sync_playwright() as p:
+        profile_dir = os.path.join(os.environ.get("TEMP", "C:/tmp"), "espn_openclaw_profile")
+        browser = p.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        try:
+            page = browser.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            page.wait_for_timeout(2500)
+            ensure_espn_login(page, session_id=session_id)
+            try:
+                page.locator(".players-table .Table__TR, .players-table .player__column").first.wait_for(
+                    state="visible", timeout=20000
+                )
+            except Exception:
+                page.wait_for_timeout(4000)
+            scraped = page.evaluate(_TEAM_LINEUP_JS) or {}
+        finally:
+            browser.close()
+
+    players = [p for p in (scraped.get("players") or []) if (p.get("name") or "").strip()]
+    starters = [p for p in players if p.get("status") == "ACTIVE"]
+    bench = [p for p in players if p.get("status") == "BENCH"]
+    if not starters and not bench:
+        raise RuntimeError(
+            "Could not find starters or bench on that team page. Check the link and that the roster has loaded."
+        )
+    result = {
+        "week": scraped.get("week") or 1,
+        "team_url": url,
+        "players": players,
+    }
+    log_system_event(
+        "LINEUP_SCRAPE_DONE",
+        f"Scraped {len(starters)} starters and {len(bench)} bench from team page",
+        {"starters": len(starters), "bench": len(bench), "week": result["week"]},
+        session_id=session_id,
+    )
+    return result
+
+
 @playwright_sync
 def execute_roster_changes_browser(pick_instructions: dict, session_id: str = None):
     """

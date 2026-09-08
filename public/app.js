@@ -9,7 +9,6 @@ let activeSessionId = null;
 let autoMode = false;
 let liveDraftPollTimer = null;
 let liveDraftRunning = false;
-let draftKind = "live";
 
 let modalActionId = null;
 let modalActionType = null;
@@ -18,7 +17,6 @@ let modalSuggestions = [];
 document.addEventListener("DOMContentLoaded", () => {
     initTheme();
     initAutoMode();
-    initDraftKind();
     document.addEventListener("click", (e) => {
         const menu = document.getElementById("session-menu");
         const trigger = document.getElementById("session-trigger");
@@ -29,8 +27,10 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("session-create-form").addEventListener("submit", handleCreateSession);
     document.getElementById("chat-form").addEventListener("submit", handleChatSubmit);
     document.getElementById("espn-settings-form").addEventListener("submit", handleEspnSettingsSubmit);
-    const mockInput = document.getElementById("mock-draft-url");
-    if (mockInput) mockInput.value = localStorage.getItem("nfl_mock_draft_url") || "";
+    const draftInput = document.getElementById("draft-url");
+    if (draftInput) draftInput.value = savedDraftUrl();
+    const lineupInput = document.getElementById("lineup-url");
+    if (lineupInput) lineupInput.value = localStorage.getItem("nfl_lineup_url") || "";
     loadSessions();
 });
 
@@ -143,11 +143,13 @@ async function loadLeagueSettings() {
 async function loadEspnSettings() {
     const leagueInput = document.getElementById("espn-league-id-input");
     const teamInput = document.getElementById("espn-team-id-input");
+    const lineupInput = document.getElementById("lineup-url");
     const s2Input = document.getElementById("espn-s2-input");
     const swidInput = document.getElementById("espn-swid-input");
 
     leagueInput.value = "";
     teamInput.value = "";
+    if (lineupInput) lineupInput.value = "";
     s2Input.value = "";
     swidInput.value = "";
 
@@ -160,9 +162,13 @@ async function loadEspnSettings() {
         leagueInput.placeholder = settings.league_id ? "" : "";
         teamInput.value = settings.team_id || "";
         teamInput.placeholder = settings.team_id ? "" : "";
+        if (lineupInput) {
+            lineupInput.value = settings.lineup_url || localStorage.getItem("nfl_lineup_url") || "";
+        }
         s2Input.placeholder = settings.espn_s2_set ? "Already saved — leave blank to keep" : "Auto-captured on login";
         swidInput.placeholder = settings.swid_set ? "Already saved — leave blank to keep" : "Auto-captured on login";
     } catch (err) {
+        if (lineupInput) lineupInput.value = localStorage.getItem("nfl_lineup_url") || "";
         document.getElementById("espn-settings-hint").innerText = `Couldn't load current settings: ${err.message}`;
     }
 }
@@ -173,9 +179,11 @@ async function handleEspnSettingsSubmit(event) {
     const payload = {
         league_id: document.getElementById("espn-league-id-input").value.trim(),
         team_id: document.getElementById("espn-team-id-input").value.trim(),
+        lineup_url: (document.getElementById("lineup-url")?.value || "").trim(),
         espn_s2: document.getElementById("espn-s2-input").value.trim(),
         swid: document.getElementById("espn-swid-input").value.trim(),
     };
+    if (payload.lineup_url) localStorage.setItem("nfl_lineup_url", payload.lineup_url);
 
     try {
         const res = await fetch(`/api/espn-settings${sessionQuery()}`, {
@@ -782,11 +790,21 @@ function closeModal(event) {
 /* ---------------------------------------------------------------------- */
 
 async function triggerLineupOptimizer() {
-    showToast(autoMode ? "Setting lineup automatically via local DeepSeek R1…" : "Getting lineup suggestions from local DeepSeek R1…");
+    const url = (document.getElementById("lineup-url")?.value || "").trim();
+    if (!url) {
+        showToast("Paste your team page link in ESPN Connection first.", false);
+        return;
+    }
+    localStorage.setItem("nfl_lineup_url", url);
+    showToast(autoMode ? "Opening your team page, then setting the lineup…" : "Opening your team page for lineup suggestions…");
     setButtonsDisabled(true);
 
     try {
-        const res = await fetch(`/api/run-lineup-optimizer${runQuery()}`, { method: "POST" });
+        const res = await fetch(`/api/run-lineup-optimizer${runQuery()}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lineup_url: url }),
+        });
         const data = await res.json();
         if (data.status === "success") {
             showToast(`${data.message} (#${data.record_id || 'new'})`, false);
@@ -854,48 +872,20 @@ async function triggerDraftStrategy() {
     }
 }
 
-function initDraftKind() {
-    draftKind = localStorage.getItem("nfl_draft_kind") === "mock" ? "mock" : "live";
-    renderDraftKind();
-}
-
-function setDraftKind(kind) {
-    if (liveDraftRunning) return;
-    draftKind = kind === "mock" ? "mock" : "live";
-    localStorage.setItem("nfl_draft_kind", draftKind);
-    renderDraftKind();
-}
-
-function renderDraftKind() {
-    const isMock = draftKind === "mock";
-    document.getElementById("draft-kind-live")?.classList.toggle("active", !isMock);
-    document.getElementById("draft-kind-mock")?.classList.toggle("active", isMock);
-    const title = document.getElementById("draft-join-title");
-    const desc = document.getElementById("draft-join-desc");
-    const icon = document.getElementById("draft-join-icon");
-    if (title) title.innerText = isMock ? "Join Mock Draft" : "Join Live Draft";
-    if (desc) {
-        desc.innerText = isMock
-            ? "Paste a mock room URL, then join. Picks run automatically."
-            : "Open your ESPN draft room and pick automatically.";
-    }
-    if (icon) icon.innerText = isMock ? "🧪" : "📡";
-    document.getElementById("mock-draft-url-field")?.classList.toggle("hidden", !isMock);
-    document.getElementById("draft-join-card")?.classList.toggle("is-mock", isMock);
+function savedDraftUrl() {
+    return localStorage.getItem("nfl_draft_url")
+        || localStorage.getItem("nfl_mock_draft_url")
+        || "";
 }
 
 async function triggerDraftNight() {
-    if (draftKind === "mock") {
-        const url = (document.getElementById("mock-draft-url")?.value || "").trim();
-        if (!url) {
-            showToast("Paste an ESPN mock draft URL first.", false);
-            return;
-        }
-        localStorage.setItem("nfl_mock_draft_url", url);
-        await startLiveDraftJob(url);
+    const url = (document.getElementById("draft-url")?.value || "").trim();
+    if (!url) {
+        showToast("Paste an ESPN live or mock draft URL first.", false);
         return;
     }
-    await startLiveDraftJob(null);
+    localStorage.setItem("nfl_draft_url", url);
+    await startLiveDraftJob(url);
 }
 
 async function startLiveDraftJob(draftUrl) {
@@ -961,9 +951,9 @@ function applyLiveDraftStatus(data) {
 
     const stopBtn = document.getElementById("btn-stop-draft");
     const joinCard = document.getElementById("draft-join-card");
-    const mockInput = document.getElementById("mock-draft-url");
-    if (mockInput && !mockInput.value) {
-        mockInput.value = localStorage.getItem("nfl_mock_draft_url") || "";
+    const draftInput = document.getElementById("draft-url");
+    if (draftInput && !draftInput.value) {
+        draftInput.value = savedDraftUrl();
     }
 
     const msg = data.message || (running ? "Drafting…" : "");
@@ -971,9 +961,7 @@ function applyLiveDraftStatus(data) {
     if (joinCard) joinCard.classList.toggle("is-running", running);
 
     document.getElementById("btn-live-draft")?.toggleAttribute("disabled", running);
-    document.getElementById("draft-kind-live")?.toggleAttribute("disabled", running);
-    document.getElementById("draft-kind-mock")?.toggleAttribute("disabled", running);
-    if (mockInput) mockInput.disabled = running;
+    if (draftInput) draftInput.disabled = running;
 
     if (running) {
         startLiveDraftPolling();
@@ -1113,12 +1101,14 @@ function showToast(msg, isSpinning = true) {
 }
 
 function setButtonsDisabled(disabled) {
-    const btns = document.querySelectorAll("#btn-optimizer, #btn-draft-strategy, #btn-trade, #btn-live-draft, #draft-kind-live, #draft-kind-mock");
+    const btns = document.querySelectorAll("#btn-optimizer, #btn-draft-strategy, #btn-trade, #btn-live-draft");
     btns.forEach(b => b.disabled = disabled || liveDraftRunning);
     const countInput = document.getElementById("draft-strategy-count");
     if (countInput) countInput.disabled = disabled || liveDraftRunning;
-    const mockInput = document.getElementById("mock-draft-url");
-    if (mockInput) mockInput.disabled = disabled || liveDraftRunning;
+    const draftInput = document.getElementById("draft-url");
+    if (draftInput) draftInput.disabled = disabled || liveDraftRunning;
+    const lineupInput = document.getElementById("lineup-url");
+    if (lineupInput) lineupInput.disabled = disabled || liveDraftRunning;
     const stopBtn = document.getElementById("btn-stop-draft");
     if (stopBtn) stopBtn.disabled = false;
 }

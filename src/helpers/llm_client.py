@@ -89,18 +89,75 @@ def _parse_ollama_payload(res_data: dict):
     return parsed or {}, combined
 
 
-def query_local_deepseek(prompt: str, session_id: str = None, timeout: int = 60) -> dict:
-    """Send prompt to local DeepSeek model running via Ollama/OpenClaw."""
+def _read_ollama_stream(response, deadline: float, timeout: int) -> dict:
+    """Collect a streamed /api/generate body. Tokens arrive during thinking, so the
+    read timeout is idle time between chunks, not time until the full answer."""
+    response_parts = []
+    thinking_parts = []
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if time.time() >= deadline:
+            raise TimeoutError(f"DeepSeek exceeded the {int(timeout)}s overall limit")
+        if not raw_line:
+            continue
+        chunk = json.loads(raw_line)
+        if chunk.get("error"):
+            raise RuntimeError(str(chunk["error"]))
+        piece = chunk.get("response") or ""
+        if piece:
+            response_parts.append(piece)
+        think_piece = chunk.get("thinking") or ""
+        if think_piece:
+            thinking_parts.append(think_piece)
+        if chunk.get("done"):
+            break
+    return {
+        "response": "".join(response_parts),
+        "thinking": "".join(thinking_parts),
+    }
+
+
+def query_local_deepseek(prompt: str, session_id: str = None, timeout: int = 60, think: bool = None) -> dict:
+    """Send prompt to local DeepSeek model running via Ollama/OpenClaw.
+
+    The response is streamed so thinking tokens keep the socket alive.
+    `timeout` is the overall deadline. The HTTP read timeout is idle time
+    between chunks (capped at 180s), not time until the full reply is finished.
+    """
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
-        "stream": False,
+        "stream": True,
     }
+    if think is not None:
+        payload["think"] = bool(think)
+    print(f"\n===== LLM PROMPT ({OLLAMA_MODEL}) =====\n{prompt}\n===== END LLM PROMPT =====\n", flush=True)
     started = time.time()
+    deadline = started + max(1, int(timeout))
+    idle_read = min(180, max(1, int(timeout)))
     try:
-        response = requests.post(OLLAMA_ENDPOINT, json=payload, timeout=timeout)
-        response.raise_for_status()
-        res_data = response.json()
+        try:
+            response = requests.post(
+                OLLAMA_ENDPOINT,
+                json=payload,
+                timeout=(15, idle_read),
+                stream=True,
+            )
+            response.raise_for_status()
+        except requests.HTTPError:
+            # Older Ollama builds reject the think flag. Retry without it.
+            if "think" not in payload:
+                raise
+            response.close()
+            payload.pop("think", None)
+            response = requests.post(
+                OLLAMA_ENDPOINT,
+                json=payload,
+                timeout=(15, idle_read),
+                stream=True,
+            )
+            response.raise_for_status()
+        with response:
+            res_data = _read_ollama_stream(response, deadline, timeout)
         elapsed = time.time() - started
         parsed, raw_text = _parse_ollama_payload(res_data)
         if not _looks_like_result(parsed):

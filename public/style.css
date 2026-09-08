@@ -564,18 +564,6 @@ select:focus-visible,
     cursor: not-allowed;
 }
 
-.draft-kind-toggle {
-    width: 100%;
-    min-width: 0;
-    margin: 0;
-    box-sizing: border-box;
-}
-
-.draft-kind-toggle .mode-btn {
-    font-size: 0.72rem;
-    padding: 0.32rem 0.4rem;
-}
-
 .draft-url-field {
     display: flex;
     flex-direction: column;

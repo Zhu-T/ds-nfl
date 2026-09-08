@@ -332,7 +332,7 @@ def init_db(session_id: str = None):
     # Migrate any pre-existing db files (created before a column existed) in place.
     _ensure_columns(cursor, "league_settings", {"draft_order_json": "TEXT", "draft_type": "TEXT"})
     _ensure_columns(cursor, "action_logs", {"prompt_sent": "TEXT", "raw_model_response": "TEXT"})
-    _ensure_columns(cursor, "espn_session", {"league_id": "TEXT", "team_id": "TEXT"})
+    _ensure_columns(cursor, "espn_session", {"league_id": "TEXT", "team_id": "TEXT", "lineup_url": "TEXT"})
 
     conn.commit()
     conn.close()
@@ -465,7 +465,7 @@ def get_espn_settings(session_id: str = None):
     return dict(row) if row else None
 
 
-def save_espn_settings(league_id: str = None, team_id: str = None, espn_s2: str = None, swid: str = None, session_id: str = None) -> dict:
+def save_espn_settings(league_id: str = None, team_id: str = None, espn_s2: str = None, swid: str = None, lineup_url: str = None, session_id: str = None) -> dict:
     """
     Upsert this session's ESPN connection settings. Only overwrites fields
     that are explicitly provided (non-None) — the settings form may submit
@@ -479,22 +479,24 @@ def save_espn_settings(league_id: str = None, team_id: str = None, espn_s2: str 
         "team_id": team_id if team_id is not None else existing.get("team_id"),
         "espn_s2": espn_s2 if espn_s2 is not None else existing.get("espn_s2"),
         "swid": swid if swid is not None else existing.get("swid"),
+        "lineup_url": lineup_url if lineup_url is not None else existing.get("lineup_url"),
     }
     conn = get_db_connection(session_id)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO espn_session (id, league_id, team_id, espn_s2, swid, updated_at)
-        VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO espn_session (id, league_id, team_id, espn_s2, swid, lineup_url, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
             league_id = excluded.league_id,
             team_id = excluded.team_id,
             espn_s2 = excluded.espn_s2,
             swid = excluded.swid,
+            lineup_url = excluded.lineup_url,
             updated_at = CURRENT_TIMESTAMP
-    """, (merged["league_id"], merged["team_id"], merged["espn_s2"], merged["swid"]))
+    """, (merged["league_id"], merged["team_id"], merged["espn_s2"], merged["swid"], merged["lineup_url"]))
     conn.commit()
     conn.close()
-    log_system_event("ESPN_SETTINGS_SAVED", "Updated ESPN connection settings for this session", {"fields_updated": [k for k, v in {"league_id": league_id, "team_id": team_id, "espn_s2": espn_s2, "swid": swid}.items() if v is not None]}, session_id=session_id)
+    log_system_event("ESPN_SETTINGS_SAVED", "Updated ESPN connection settings for this session", {"fields_updated": [k for k, v in {"league_id": league_id, "team_id": team_id, "espn_s2": espn_s2, "swid": swid, "lineup_url": lineup_url}.items() if v is not None]}, session_id=session_id)
     return merged
 
 

@@ -8,6 +8,7 @@ import os
 import json
 import logging
 import datetime
+import re
 
 # Ensure root directory is in python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -15,8 +16,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.helpers.db_manager import (
     load_env, log_action, log_system_event, create_suggestions,
     get_suggestions_for_action, update_suggestion_status, update_action_status,
+    get_league_settings,
 )
-from src.helpers.espn_client import fetch_espn_roster_via_api, execute_roster_changes_browser, get_saved_league_settings_block
+from src.helpers.espn_client import (
+    scrape_lineup_from_team_page,
+    execute_roster_changes_browser,
+    format_league_settings_block,
+)
 from src.helpers.llm_client import query_local_deepseek
 from src.helpers.nfl_data_client import enrich_players_with_stats, refresh_espn_id_crosswalk
 from src.helpers.prompt_loader import load_guidance
@@ -25,56 +31,175 @@ load_env()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def run_lineup_optimizer_workflow(session_id: str = None, auto_execute: bool = False):
+def _name_key(name: str) -> str:
+    text = re.sub(r"[^a-z0-9 ]", "", (name or "").lower())
+    text = re.sub(r"\b(jr|sr|ii|iii|iv|v)\b", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _on_roster(name: str, roster_names: list) -> str:
+    key = _name_key(name)
+    if not key:
+        return ""
+    for other in roster_names:
+        other_key = _name_key(other)
+        if key == other_key or key in other_key or other_key in key:
+            return other
+    return ""
+
+
+def _stat_num(value):
+    if value is None or value == "":
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if num != num:
+        return None
+    if num == int(num):
+        return int(num)
+    return round(num, 1)
+
+
+def _format_lineup_roster(players) -> str:
+    """Compact roster lines. The full enriched JSON makes DeepSeek-R1 think past the read timeout."""
+    lines = []
+    for player in players or []:
+        name = (player.get("name") or "").strip()
+        if not name:
+            continue
+        recent = player.get("recent_stats") or {}
+        seasons = []
+        for row in player.get("season_stats_by_year") or []:
+            year = row.get("season")
+            ppr = _stat_num(row.get("fantasy_points_ppr"))
+            games = _stat_num(row.get("games"))
+            if year is None and ppr is None:
+                continue
+            bit = str(year) if year is not None else "?"
+            if ppr is not None:
+                bit += f" {ppr}ppr"
+            if games is not None:
+                bit += f"/{games}g"
+            seasons.append(bit)
+        bits = [
+            name,
+            player.get("pos") or "",
+            player.get("lineup_slot") or "",
+            player.get("status") or "",
+        ]
+        injury = player.get("injury_status")
+        if injury and injury not in ("ACTIVE", "UNKNOWN"):
+            bits.append(f"injury={injury}")
+        recent_ppr = _stat_num(recent.get("fantasy_points_ppr"))
+        if recent_ppr is not None:
+            bits.append(f"last_game_ppr={recent_ppr}")
+        if seasons:
+            bits.append("seasons=" + ", ".join(seasons))
+        lines.append(" | ".join(str(bit) for bit in bits if bit))
+    return "\n".join(lines) or "(none)"
+
+
+def _keep_roster_names(names, roster_names: list) -> list:
+    kept = []
+    seen = set()
+    for name in names or []:
+        match = _on_roster(name, roster_names)
+        if not match:
+            continue
+        key = _name_key(match)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(match)
+    return kept
+
+
+def run_lineup_optimizer_workflow(session_id: str = None, auto_execute: bool = False, lineup_url: str = None):
     logging.info("Starting NFL Fantasy Lineup Optimizer Workflow...")
     log_system_event("WORKFLOW_START", "Starting Lineup Optimizer execution", session_id=session_id)
 
-    roster_data = fetch_espn_roster_via_api(ttl_seconds=300, session_id=session_id)
+    roster_data = scrape_lineup_from_team_page(lineup_url, session_id=session_id)
     current_week = roster_data.get("week", 1)
+    eligible = [
+        p.get("name")
+        for p in roster_data.get("players") or []
+        if p.get("name") and (p.get("status") or "") != "IR"
+    ]
 
     # Refresh the ESPN-id/gsis-id crosswalk so player matching stays ID-based
     # (chat's lookups reuse whatever's persisted here rather than refreshing it).
     refresh_espn_id_crosswalk(session_id=session_id)
 
-    # Enrich the ESPN roster (who's on your team / starter-bench slots) with real
+    # Enrich the scraped roster (starters / bench from the team page) with
     # player performance & injury data from nflreadpy, instead of ESPN's stats.
     season = datetime.datetime.now().year
     roster_data["players"] = enrich_players_with_stats(roster_data.get("players", []), season=season, session_id=session_id)
     log_system_event("NFL_DATA_ENRICHED", f"Enriched {len(roster_data['players'])} players with nflreadpy stats/injuries for season {season}", session_id=session_id)
 
-    guidance = load_guidance("system_guidance.md", "data_interpretation_guidance.md", "lineup_guidance.md")
-    league_settings_block = get_saved_league_settings_block(session_id=session_id)
+    guidance = load_guidance("system_guidance.md", "lineup_guidance.md")
+    saved = get_league_settings(session_id=session_id)
+    league_settings_block = format_league_settings_block(saved) if saved else ""
+    allowed_lines = "\n".join(f"- {name}" for name in eligible) or "(none)"
+    roster_lines = _format_lineup_roster(roster_data.get("players"))
     prompt = f"""
 {guidance}
 
-DECISION: set this week's starting lineup vs bench.
+DECISION: set this week's starting lineup vs bench. Reply with the JSON object only. Keep rationale to one sentence.
 
-DATA YOU WILL RECEIVE:
-1. LEAGUE SETTINGS — plain text with Format and Roster lines.
-2. ROSTER DATA — JSON object:
-   {{"week": int, "team_id": int|string, "players": [player, ...]}}
-   Each player typically includes:
-   {{"name": string, "pos": string, "status": "ACTIVE"|"BENCH"|"IR", "lineup_slot": string, "recent_stats": object|null, "season_stats_by_year": [object], "injury_status": string}}
+ALLOWED PLAYERS — these are the only names you may use. Copy them exactly. Do not add, invent, or substitute anyone else:
+{allowed_lines}
 
-REPLY FORMAT — JSON object only:
-{{"starters": ["Player A"], "bench": ["Player B"], "rationale": "string"}}
+ACTIVE means currently starting. BENCH means currently benched. IR players are listed below but must not be placed in starters.
+Only bench players who should come into the lineup are start changes. Do not treat a player who is already ACTIVE as a new start.
+
+REPLY FORMAT — JSON object only. Every name in starters and bench must appear in ALLOWED PLAYERS:
+{{"starters": ["<one allowed name>"], "bench": ["<one allowed name>"], "rationale": "short why"}}
 
 ---
 
 {league_settings_block}
 
-ROSTER DATA:
-{json.dumps(roster_data, indent=2)}
+ROSTER (one player per line):
+{roster_lines}
 """
     
     log_system_event("LLM_PROMPT_SENT", f"Sending roster evaluation prompt to DeepSeek for Week {current_week}", session_id=session_id)
-    decisions = query_local_deepseek(prompt, session_id=session_id)
+    # 10 minutes overall. The HTTP read timeout stays 3 minutes of silence between
+    # streamed tokens. think=False skips the R1 trace that never reached the socket.
+    decisions = query_local_deepseek(prompt, session_id=session_id, timeout=600, think=False)
     logging.info(f"DeepSeek Pick Decisions: {decisions}")
 
-    starters = decisions.get("starters", ["Josh Allen", "Christian McCaffrey"])
-    bench = decisions.get("bench", ["Baker Mayfield"])
-    rationale = decisions.get("rationale", "Analyzed projections and match-ups. Selected optimal starters.")
+    starters = _keep_roster_names(decisions.get("starters") or [], eligible)
+    bench = _keep_roster_names(decisions.get("bench") or [], eligible)
+    already_starting = {
+        _name_key(p.get("name"))
+        for p in roster_data.get("players") or []
+        if p.get("name") and (p.get("status") or "") == "ACTIVE"
+    }
+    start_moves = [name for name in starters if _name_key(name) not in already_starting]
+    used = {_name_key(n) for n in starters + bench}
+    for name in eligible:
+        if _name_key(name) not in used:
+            bench.append(name)
+            used.add(_name_key(name))
+    dropped = [
+        n for n in (decisions.get("starters") or []) + (decisions.get("bench") or [])
+        if n and not _on_roster(n, eligible)
+    ]
+    rationale = (decisions.get("rationale") or "").strip() or "Compared the scraped starters and bench."
+    if dropped:
+        rationale = f"{rationale} Ignored names not on the team page: {', '.join(dropped)}."
+    if starters and not start_moves:
+        rationale = f"{rationale} No changes — recommended starters are already starting."
+    if not starters:
+        if not decisions:
+            raise RuntimeError("DeepSeek did not return a lineup. Check the console for a timeout or empty reply.")
+        raise RuntimeError("DeepSeek did not name any starter who is on the scraped team page.")
     status = "PENDING_REVIEW" if decisions else "SIMULATED_FALLBACK"
+    if not start_moves:
+        status = "NO_CHANGES"
 
     # Store the recommendation for review — nothing is clicked on ESPN yet.
     # Each proposed starter becomes its own suggestion the user can accept or
@@ -91,10 +216,10 @@ ROSTER DATA:
         session_id=session_id
     )
 
-    if starters:
+    if start_moves:
         suggestion_ids = create_suggestions(
             record_id,
-            [{"type": "START", "player": p, "detail": {"rationale": rationale}} for p in starters],
+            [{"type": "START", "player": p, "detail": {"rationale": rationale}} for p in start_moves],
             session_id=session_id
         )
 

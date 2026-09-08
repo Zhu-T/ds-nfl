@@ -89,3 +89,7 @@ Action history, system logs, and the API cache all live in per-session SQLite fi
 Player performance stats and injury status come from [`nflreadpy`](https://github.com/nflverse/nflreadpy) (the official nflverse Python port of nflreadr), not ESPN — ESPN's API is used only to read your actual fantasy roster (who's on your team, starter/bench slots), since that's league-specific data only ESPN has. `nfl_data_client.py` converts nflreadpy's Polars frames to pandas, then enriches each player with their most recent stat line and injury report before it's sent to DeepSeek, falling back to the most recent published season if the current one isn't out yet (e.g. during the off-season).
 
 Note: ESPN does not provide a public write API — roster/lineup/draft changes are executed via Playwright browser automation against the ESPN Fantasy UI.
+
+## TODO: 
+- Allow direct chatting with the AI (use one session)
+- Consolodate mock and live draft
