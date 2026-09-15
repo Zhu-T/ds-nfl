@@ -1,0 +1,151 @@
+diff -ruN orig/packages/llm/src/chat.test.ts new/packages/llm/src/chat.test.ts
+--- orig/packages/llm/src/chat.test.ts	2026-09-14 09:19:22.658472300 -0400
++++ new/packages/llm/src/chat.test.ts	2026-09-14 22:56:25.407493800 -0400
+@@ -42,7 +42,8 @@
+ 
+   it('Ollama sends system, then earlier turns, then the new question', async () => {
+     const bodies: any[] = [];
+-    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
++    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
++      if (String(input).endsWith('/api/show')) return new Response('{}', { status: 200 });
+       bodies.push(JSON.parse(String(init?.body)));
+       return new Response(JSON.stringify({ message: { content: 'ok' } }), { status: 200 });
+     }) as typeof fetch;
+diff -ruN orig/packages/llm/src/digest.test.ts new/packages/llm/src/digest.test.ts
+--- orig/packages/llm/src/digest.test.ts	2026-09-14 22:40:35.218816900 -0400
++++ new/packages/llm/src/digest.test.ts	2026-09-14 22:56:27.708682000 -0400
+@@ -92,7 +92,8 @@
+ describe('OllamaProvider context window', () => {
+   const capture = () => {
+     const bodies: any[] = [];
+-    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
++    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
++      if (String(url).endsWith('/api/show')) return new Response('{}', { status: 200 });
+       bodies.push(JSON.parse(String(init?.body)));
+       return new Response(JSON.stringify({ message: { content: 'ok' } }), { status: 200 });
+     }) as typeof fetch;
+diff -ruN orig/packages/llm/src/ollama.ts new/packages/llm/src/ollama.ts
+--- orig/packages/llm/src/ollama.ts	2026-09-14 22:41:59.964283500 -0400
++++ new/packages/llm/src/ollama.ts	2026-09-14 22:56:12.229293000 -0400
+@@ -28,9 +28,15 @@
+   readonly models?: readonly { readonly name: string }[];
+ }
+ 
++interface OllamaShowResponse {
++  readonly system?: string;
++}
++
+ export class OllamaProvider implements LlmProvider {
+   readonly id = 'ollama' as const;
+ 
++  private modelSystemLookup: Promise<string> | null = null;
++
+   constructor(
+     readonly model: string,
+     private readonly baseUrl: string = DEFAULT_OLLAMA_URL,
+@@ -38,12 +44,35 @@
+     private readonly fetchImpl: typeof fetch = fetch,
+   ) {}
+ 
++  /**
++   * The SYSTEM prompt from the model's Modelfile, or '' when it has none.
++   *
++   * Ollama applies a Modelfile's SYSTEM only to requests that carry no system
++   * message, and every request here carries one, so a model built for this app
++   * (models/fantasy/Modelfile) would silently lose its primer. It goes ahead of
++   * the app's instructions instead, which state the task and win where they are
++   * stricter. A failed lookup is not an error: the chat request that follows
++   * reports a stopped server or a missing model properly.
++   */
++  private modelSystem(): Promise<string> {
++    this.modelSystemLookup ??= this.fetchImpl(`${trimSlash(this.baseUrl)}/api/show`, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ model: this.model }),
++      signal: AbortSignal.timeout(5_000),
++    })
++      .then(async (res) => (res.ok ? (((await res.json()) as OllamaShowResponse).system?.trim() ?? '') : ''))
++      .catch(() => '');
++    return this.modelSystemLookup;
++  }
++
+   async complete(request: LlmRequest): Promise<LlmText> {
++    const modelSystem = await this.modelSystem();
+     const body = {
+       model: this.model,
+       stream: false,
+       messages: [
+-        { role: 'system', content: request.system },
++        { role: 'system', content: modelSystem ? `${modelSystem}\n\n${request.system}` : request.system },
+         ...(request.history ?? []).map((turn) => ({ role: turn.role, content: turn.content })),
+         { role: 'user', content: request.user },
+       ],
+diff -ruN orig/packages/llm/src/providers.test.ts new/packages/llm/src/providers.test.ts
+--- orig/packages/llm/src/providers.test.ts	2026-09-14 03:18:41.819385900 -0400
++++ new/packages/llm/src/providers.test.ts	2026-09-14 22:56:23.098824300 -0400
+@@ -72,9 +72,17 @@
+   });
+ });
+ 
+-/** Records every request and replays scripted responses in order. */
+-function fakeFetch(responses: Response[], sink: { url: string; body: any }[] = []): typeof fetch {
++/**
++ * Records every request except the model lookup and replays scripted responses
++ * in order. The lookup gets `show`: by default, a model with no system prompt.
++ */
++function fakeFetch(
++  responses: Response[],
++  sink: { url: string; body: any }[] = [],
++  show: () => Response = () => json({}),
++): typeof fetch {
+   return (async (input: string | URL | Request, init?: RequestInit) => {
++    if (String(input).endsWith('/api/show')) return show();
+     sink.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+     const next = responses.shift();
+     if (!next) throw new Error('no scripted response left');
+@@ -86,6 +94,45 @@
+   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+ 
+ describe('OllamaProvider', () => {
++  it("puts the model's own system prompt ahead of the app's", async () => {
++    // Ollama uses a Modelfile SYSTEM, such as the primer in models/fantasy, only
++    // when a request has no system message, so without this it would be dropped.
++    const sent: { url: string; body: any }[] = [];
++    const provider = new OllamaProvider(
++      'ds-nfl-fantasy',
++      undefined,
++      fakeFetch([json({ message: { content: 'ok' } })], sent, () => json({ system: 'PRIMER\n' })),
++    );
++    await provider.complete(request);
++    expect(sent[0]?.body.messages[0]).toEqual({ role: 'system', content: 'PRIMER\n\nSYSTEM' });
++  });
++
++  it("sends the app's system prompt alone when the model lookup fails", async () => {
++    const sent: { url: string; body: any }[] = [];
++    const provider = new OllamaProvider(
++      'deepseek-r1:14b',
++      undefined,
++      fakeFetch([json({ message: { content: 'ok' } })], sent, () => json({ error: 'boom' }, 500)),
++    );
++    await provider.complete(request);
++    expect(sent[0]?.body.messages[0]).toEqual({ role: 'system', content: 'SYSTEM' });
++  });
++
++  it('looks the model up once, not on every request', async () => {
++    let lookups = 0;
++    const provider = new OllamaProvider(
++      'ds-nfl-fantasy',
++      undefined,
++      fakeFetch([json({ message: { content: 'a' } }), json({ message: { content: 'b' } })], [], () => {
++        lookups++;
++        return json({ system: 'PRIMER' });
++      }),
++    );
++    await provider.complete(request);
++    await provider.complete(request);
++    expect(lookups).toBe(1);
++  });
++
+   it('posts a non-streaming chat with thinking turned off', async () => {
+     const sent: { url: string; body: any }[] = [];
+     const provider = new OllamaProvider(
