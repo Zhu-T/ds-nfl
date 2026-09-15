@@ -1,0 +1,4 @@
+# Derived from prompts.jsonl and answers.jsonl; rebuild with make-prompts.ts and build-dataset.ts.
+data/sheets/
+data/train.jsonl
+data/val.jsonl
