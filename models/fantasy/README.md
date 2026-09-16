@@ -7,12 +7,37 @@ on the app's own prompts and checks.
 
 | model | what it is | verdict |
 | --- | --- | --- |
+| `ds-nfl-lora` | a LoRA adapter trained on all five tasks (v2) | clean on all five tasks, about 5 times faster than stock; **the one to use** |
+| `ds-nfl-lora` v1 | the first adapter, trained on the three prose tasks only | better than stock at prose, but mangled the JSON tasks it never saw; replaced by v2 on 2026-09-16 |
 | `ds-nfl-fantasy` | the stock model plus a fantasy primer in its Modelfile | no better than stock; do not use |
-| `ds-nfl-lora` | a LoRA adapter trained on the three prose tasks | better than stock at prose, about 4.6 times faster; but it mangles the JSON tasks it never saw |
-| `ds-nfl-lora-v2` | the same, retrained with the two JSON tasks added | clean on all five tasks, same prose and speed; **not promoted** — the app still points at `ds-nfl-lora` |
 
-Both share the base model's weights, so neither takes meaningful extra disk
-space, and both use the same VRAM as the stock model.
+All of them share the base model's weights, so none takes meaningful extra disk
+space, and all use the same VRAM as the stock model.
+
+## Quick start
+
+The trained adapter is in `lora/adapter/` of
+[github.com/Zhu-T/ds-nfl-lora](https://github.com/Zhu-T/ds-nfl-lora), stored with
+Git LFS, so install LFS before cloning:
+
+```
+git lfs install
+git clone https://github.com/Zhu-T/ds-nfl-lora.git
+cd ds-nfl-lora
+ollama pull deepseek-r1:14b
+ollama create ds-nfl-lora -f lora/Modelfile
+```
+
+Then choose `ds-nfl-lora` in the app under **Connect a league → AI explanations → Ollama**.
+
+The eval and the training-data scripts import the app's prompts, fact builders,
+parsers, and checks from `packages/llm` and `packages/core`, so they run from a
+ds-nfl checkout with that repo cloned into `models/fantasy`. The commands in the
+rest of this README are written from the ds-nfl root:
+
+```
+git clone https://github.com/Zhu-T/ds-nfl-lora.git models/fantasy
+```
 
 ## Measuring a model
 
@@ -47,11 +72,11 @@ Measured on 2026-09-16 before retraining, three runs of each of the five JSON ca
 | model | parsed | news | picks | no code fence | text after the block | median |
 | --- | --- | --- | --- | --- | --- | --- |
 | `deepseek-r1:14b` | 15/15 | 9/9 | 6/6 | 0 | 0 | 6.3 s |
-| `ds-nfl-lora` | 15/15 | 9/9 | 6/6 | 7 | 2 | 1.3 s |
+| `ds-nfl-lora` v1 | 15/15 | 9/9 | 6/6 | 7 | 2 | 1.3 s |
 
 Both models are parsed every time only because `lastJsonBlock` now accepts an
-unfenced block, one written twice, and trailing text. Before that change the
-fine-tune's unfenced answers were rejected outright, which is what
+unfenced block, one written twice, and trailing text. Before that change v1's
+unfenced answers were rejected outright, which is what
 "The model did not end with picks in the agreed format" was in the app.
 
 Format is not the only problem, and the other one moves projections. Neither
@@ -60,13 +85,13 @@ model leaves alone a player whose items support nothing:
 - both reported a player whose injury a later item resolved — as a role change
   with a factor of **1.25**, a quarter added to the projection of a player the
   news says is healthy;
-- `ds-nfl-lora` cut Jaylen Warren by a quarter (`questionable`, 0.75) on an item
-  that was only a game recap, and stock cut Rhamondre Stevenson by a tenth.
+- v1 cut Jaylen Warren by a quarter (`questionable`, 0.75) on an item that was
+  only a game recap, and stock cut Rhamondre Stevenson by a tenth.
 
 Each factor is inside the range for its status, so the app applies it. The eval
 flags these because the items do not support them.
 
-### Retrained: ds-nfl-lora-v2
+### Retrained: v2, now `ds-nfl-lora`
 
 Adding the two tasks to the training set fixes both failures. Trained 2026-09-16
 on 261 examples with 29 held out, 14.6 minutes, peaking at 11.9 GB; validation
@@ -75,8 +100,8 @@ Measured over all thirteen cases, three runs each:
 
 | model | shown | lineup | pitch | chat | news | picks | median | heuristic flags |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `ds-nfl-lora-v2` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | none |
-| `ds-nfl-lora` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | no fenced block 7, text after the block 2, items do not support 3 |
+| `ds-nfl-lora` v2 | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | none |
+| `ds-nfl-lora` v1 | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | no fenced block 7, text after the block 2, items do not support 3 |
 | `deepseek-r1:14b` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 6.0 s | items do not support 3, findings dropped for citing nothing 6, markdown 1 |
 
 v2 fences every block, writes nothing after it, and reports only the players the
@@ -85,10 +110,10 @@ prose tasks hold their previous scores and speed. The fine-tune did not get wors
 at prose, which was the risk in adding 50 formulaic examples. Stock still reads a
 resolved injury as a role change, and had six findings dropped for citing no item.
 
-The adapter is in `run2/epoch-2` and loaded as its own Ollama model,
-`ds-nfl-lora-v2`. It is deliberately **not** promoted: `ds-nfl-lora` is untouched
-and the app keeps using it until someone chooses otherwise under
-**Connect a league → AI explanations → Ollama**.
+The adapter is `run2/epoch-2`. It was first loaded as a separate Ollama model,
+`ds-nfl-lora-v2`, to compare against v1, and was promoted on 2026-09-16: the
+`ds-nfl-lora` model now loads it, so the app picks it up with no settings change,
+and `lora/adapter/` in the published repo holds the v2 files.
 
 ### The prompts and their answers
 
@@ -117,15 +142,15 @@ system prompt of its own, so the app uses it as it is: choose `ds-nfl-lora` unde
 **Connect a league → AI explanations → Ollama**. The provider patch described below
 is not needed for it.
 
-### Results
+### First results (v1, prose tasks only)
 
 Run on 2026-09-15 on an RTX 5070 Ti with Ollama 0.33.3, three runs of each of the
-eight held-out cases per model:
+eight prose cases per model:
 
 | model | shown by the app | median time | heuristic flags |
 | --- | --- | --- | --- |
 | `deepseek-r1:14b` | 24/24 | 5.5 s | overstated gain 3 |
-| `ds-nfl-lora` | 24/24 | 1.2 s | none |
+| `ds-nfl-lora` v1 | 24/24 | 1.2 s | none |
 
 Hidden reasoning, on three held-out validation prompts (one per task) sent exactly
 as the app sends them, with `think: false`:
@@ -133,14 +158,13 @@ as the app sends them, with `think: false`:
 | model | thinking characters | tokens generated | time |
 | --- | --- | --- | --- |
 | `deepseek-r1:14b` | 1,352 to 2,063 | 354 to 693 | 5.4 to 13.1 s |
-| `ds-nfl-lora` | 0 | 33 to 140 | 0.7 to 2.8 s |
+| `ds-nfl-lora` v1 | 0 | 33 to 140 | 0.7 to 2.8 s |
 
 What the numbers show, and what they do not:
 
 - **Speed is the solid result.** The adapter learned to close its think block at
   once, which `think: false` could not make the stock model do. Almost all of the
-  stock model's time was reasoning the app never shows, which is where the 4.6 times
-  comes from.
+  stock model's time was reasoning the app never shows. v2 keeps the same speed.
 - **Both models pass the app's own checks every time.** The heuristic flags are
   weaker evidence for the fine-tune, because its training answers were written to
   avoid exactly those flags; zero flags is partly by construction. Reading the
@@ -149,37 +173,38 @@ What the numbers show, and what they do not:
   upgrade", credits a quarterback with "consistent performance and versatility", and
   in one chat answer volunteers trade advice nobody asked for.
 - **Weaknesses.** Trade pitches are formulaic, close to word for word the same on
-  every run, because the training pitches were. The eval is eight cases. The training
-  data is synthetic ESPN-style leagues, so a league with unusual scoring, or a Sleeper
-  brief, is untested. Re-run the eval after upgrading Ollama or changing the app's prompts.
+  every run, because the training pitches were. The training data is synthetic
+  ESPN-style leagues, so a league with unusual scoring, or a Sleeper brief, is
+  untested. Re-run the eval after upgrading Ollama or changing the app's prompts.
 
 ### The data
 
-- [lora/make-prompts.ts](lora/make-prompts.ts) builds 240 prompts with the app's own
-  fact builders and prompts: 90 lineup explanations, 60 trade pitches, and 90 League
-  AI questions over full briefs, 25 of them questions the brief cannot answer. It is
-  seeded, so it rebuilds the same prompts, and its lineups are realistic in mix:
-  about a third need no changes, a third one or two, and the rest three or more.
-- [lora/data/answers.jsonl](lora/data/answers.jsonl) holds a target answer for each,
-  written by Claude in the session that built this (no API key was available, so
-  there is no generation script). The style is the app's: short, plain, every number
-  from the facts, no hype, no scouting, and "the brief doesn't cover that" when it
-  doesn't.
+- [lora/make-prompts.ts](lora/make-prompts.ts) builds 290 prompts with the app's own
+  fact builders and prompts: 90 lineup explanations, 60 trade pitches, 90 League AI
+  questions over full briefs (25 of them questions the brief cannot answer), 30 news
+  digests, and 20 waiver-pick reads. It is seeded, so it rebuilds the same prompts,
+  and its lineups are realistic in mix: about a third need no changes, a third one
+  or two, and the rest three or more.
+- [lora/data/answers.jsonl](lora/data/answers.jsonl) holds the target answers for the
+  240 prose prompts, written by Claude (no API key was available, so there is no
+  generation script). The style is the app's: short, plain, every number from the
+  facts, no hype, no scouting, and "the brief doesn't cover that" when it doesn't.
+  The JSON targets are generated with their prompts, in `data/answers-generated.jsonl`.
 - [lora/build-dataset.ts](lora/build-dataset.ts) holds every answer to the same checks
-  as the eval and refuses any that fail; all 240 pass. It renders each prompt exactly
-  as Ollama renders an app request for this model, and starts each answer with an
-  empty `<think></think>` block, which teaches the model to answer without reasoning
-  first. Every tenth example is held out for validation: 216 train, 24 validation.
+  as the eval and refuses any that fail. It renders each prompt exactly as Ollama
+  renders an app request for this model, and starts each answer with an empty
+  `<think></think>` block, which teaches the model to answer without reasoning first.
+  Every tenth example is held out for validation: 261 train, 29 validation.
 
 ### Training
 
 [lora/train.py](lora/train.py): 4-bit NF4 base, LoRA rank 16 (alpha 32) on every
 linear layer, paged 8-bit AdamW, learning rate 2e-4 on a cosine schedule, batch 1
 with 8 steps of accumulation, 2 epochs, loss on the answer only. It is sized for a
-16 GB card that is also driving a desktop: on an RTX 5070 Ti with about 4.5 GB held
-by other apps, it peaked at 11.9 GB and took 16.7 minutes. Validation loss went from
-1.62 before training to 0.42 after the first epoch and 0.34 after the second. It
-slows sharply if a game or Ollama takes GPU memory while it runs.
+16 GB card that is also driving a desktop, and peaks at 11.9 GB on an RTX 5070 Ti
+with about 4.5 GB held by other apps. v1 took 16.7 minutes (validation loss 1.62,
+then 0.42, then 0.34); v2 took 14.6 minutes (1.45, then 0.34, then 0.28). It slows
+sharply if a game or Ollama takes GPU memory while it runs.
 
 To reproduce it, on Windows with Python 3.13 and Node:
 
@@ -191,7 +216,7 @@ py -3.13 -m venv %USERPROFILE%\ds-nfl-lora\venv
 
 npx vite-node models/fantasy/lora/make-prompts.ts
 npx vite-node models/fantasy/lora/build-dataset.ts
-%USERPROFILE%\ds-nfl-lora\venv\Scripts\python models/fantasy/lora/train.py --base %USERPROFILE%\ds-nfl-lora\base --out %USERPROFILE%\ds-nfl-lora\run1
+%USERPROFILE%\ds-nfl-lora\venv\Scripts\python models/fantasy/lora/train.py --base %USERPROFILE%\ds-nfl-lora\base --out %USERPROFILE%\ds-nfl-lora\run2
 ```
 
 Then turn the adapter into an Ollama model. [lora/export.ps1](lora/export.ps1) converts
@@ -199,7 +224,7 @@ it to GGUF with llama.cpp's converter (unzip the llama.cpp source into
 `%USERPROFILE%\ds-nfl-lora` first) and runs `ollama create`:
 
 ```
-powershell -File models\fantasy\lora\export.ps1 -Adapter %USERPROFILE%\ds-nfl-lora\run1\epoch-2
+powershell -File models\fantasy\lora\export.ps1 -Adapter %USERPROFILE%\ds-nfl-lora\run2\epoch-2
 ```
 
 A Blackwell card (RTX 50-series) needs the CUDA 12.8 build of PyTorch, as above.
