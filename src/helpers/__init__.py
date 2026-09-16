@@ -1,3 +1,0 @@
-"""
-NFL Fantasy Helper Modules
-"""

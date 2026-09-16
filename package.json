@@ -1,0 +1,27 @@
+{
+  "name": "ds-nfl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first NFL fantasy football assistant: drafting, lineups, waivers, and trades on a computed decision engine.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json",
+    "dev": "npm run dev --workspace=@ds-nfl/web",
+    "build": "npm run build --workspace=@ds-nfl/web",
+    "start": "npm run start --workspace=@ds-nfl/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.0.0"
+  }
+}

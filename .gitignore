@@ -16,9 +16,23 @@ __pycache__/
 env/
 venv/
 
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+.next/
+
 # Playwright & Browser cache
 .playwright/
+test-results/
+playwright-report/
+# Persistent browser profile — holds live ESPN session cookies.
 espn_openclaw_profile/
+browser-profile/
+
+# Recorded API fixtures are committed, but never raw traffic captures:
+# those are what leaked a live Disney JWT. See docs/espn-protocol.md.
+**/__fixtures__/raw/
 
 # Log files
 *.log
