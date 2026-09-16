@@ -1,13 +1,15 @@
 # Fantasy-tuned local models
 
-Two customizations of `deepseek-r1:14b` for the three things the app asks a local
-model to write: lineup explanations, trade-offer reasons, and League AI answers.
-Both were measured with the same eval, on the app's own prompts and checks.
+Customizations of `deepseek-r1:14b` for what the app asks a local model to do:
+write lineup explanations, trade-offer reasons and League AI answers, and return
+the news digest and waiver picks as JSON. All were measured with the same eval,
+on the app's own prompts and checks.
 
 | model | what it is | verdict |
 | --- | --- | --- |
 | `ds-nfl-fantasy` | the stock model plus a fantasy primer in its Modelfile | no better than stock; do not use |
-| `ds-nfl-lora` | the stock model plus a LoRA adapter trained on the app's tasks | better than stock: same pass rate, about 4.6 times faster, no hidden reasoning; use it |
+| `ds-nfl-lora` | a LoRA adapter trained on the three prose tasks | better than stock at prose, about 4.6 times faster; but it mangles the JSON tasks it never saw |
+| `ds-nfl-lora-v2` | the same, retrained with the two JSON tasks added | clean on all five tasks, same prose and speed; **not promoted** — the app still points at `ds-nfl-lora` |
 
 Both share the base model's weights, so neither takes meaningful extra disk
 space, and both use the same VRAM as the stock model.
@@ -40,7 +42,7 @@ check's digest (`{"findings": [...]}`) and the waiver-wire picks
 (`{"picks": [...]}`). The first training set had only the prose tasks, and it
 shows.
 
-Measured on 2026-09-16, three runs of each of the five JSON cases:
+Measured on 2026-09-16 before retraining, three runs of each of the five JSON cases:
 
 | model | parsed | news | picks | no code fence | text after the block | median |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -63,6 +65,30 @@ model leaves alone a player whose items support nothing:
 
 Each factor is inside the range for its status, so the app applies it. The eval
 flags these because the items do not support them.
+
+### Retrained: ds-nfl-lora-v2
+
+Adding the two tasks to the training set fixes both failures. Trained 2026-09-16
+on 261 examples with 29 held out, 14.6 minutes, peaking at 11.9 GB; validation
+loss 1.45 before training, 0.34 after the first epoch, 0.28 after the second.
+Measured over all thirteen cases, three runs each:
+
+| model | shown | lineup | pitch | chat | news | picks | median | heuristic flags |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `ds-nfl-lora-v2` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | none |
+| `ds-nfl-lora` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 1.2 s | no fenced block 7, text after the block 2, items do not support 3 |
+| `deepseek-r1:14b` | 39/39 | 9/9 | 6/6 | 9/9 | 9/9 | 6/6 | 6.0 s | items do not support 3, findings dropped for citing nothing 6, markdown 1 |
+
+v2 fences every block, writes nothing after it, and reports only the players the
+items support — including the empty answer when they support no one — while the
+prose tasks hold their previous scores and speed. The fine-tune did not get worse
+at prose, which was the risk in adding 50 formulaic examples. Stock still reads a
+resolved injury as a role change, and had six findings dropped for citing no item.
+
+The adapter is in `run2/epoch-2` and loaded as its own Ollama model,
+`ds-nfl-lora-v2`. It is deliberately **not** promoted: `ds-nfl-lora` is untouched
+and the app keeps using it until someone chooses otherwise under
+**Connect a league → AI explanations → Ollama**.
 
 ### The prompts and their answers
 
