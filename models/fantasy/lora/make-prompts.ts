@@ -18,16 +18,24 @@ import {
   leagueChatRequest,
   leagueContext,
   lineupFacts,
+  newsDigestRequest,
+  parseNewsFindings,
+  parseWaiverPicks,
   pitchTradeRequest,
   tradeFacts,
+  waiverPicksDigestRequest,
   type ContextNews,
   type ContextRosterPlayer,
   type ContextTrade,
   type ContextWaiver,
+  type DigestItem,
   type LineupFactsInput,
   type LineupMoveFact,
   type LlmRequest,
+  type ResearchPlayer,
+  type ResearchSource,
   type TradeFactsInput,
+  type WaiverArticle,
 } from '../../../packages/llm/src/index.js';
 
 // ---------------------------------------------------------------- random
@@ -301,7 +309,7 @@ function lineupInput(week: Week): { input: LineupFactsInput; starters: Spot[]; o
 
 interface Prompt {
   readonly id: string;
-  readonly task: 'lineup' | 'pitch' | 'chat';
+  readonly task: 'lineup' | 'pitch' | 'chat' | 'news' | 'picks';
   readonly request: LlmRequest;
   /** What the number guard checks an answer against, as in the app. */
   readonly facts: string;
@@ -309,6 +317,17 @@ interface Prompt {
   readonly question?: string;
   /** Chat only: the brief cannot answer the question, and the answer must say so. */
   readonly unanswerable?: boolean;
+  /** JSON tasks: what the app's parser needs, and who the fixture says the answer names. */
+  readonly json?: {
+    readonly players?: readonly ResearchPlayer[];
+    readonly sources: readonly ResearchSource[];
+    readonly expected: readonly string[];
+  };
+  /**
+   * JSON tasks only: the target answer, computed from the fixture rather than
+   * written by hand, since the fixture says exactly what the items support.
+   */
+  readonly answer?: string;
 }
 
 function lineupPrompt(id: string): Prompt {
@@ -484,6 +503,299 @@ function chatPrompt(id: string, i: number): Prompt {
   }
 }
 
+// ---------------------------------------------------------------- json tasks
+
+/**
+ * The two tasks whose answer is a JSON block the app parses rather than prose:
+ * the news digest and the waiver-wire picks. The items are synthesized, so the
+ * correct answer is known and generated with them; each is put through the
+ * app's own parser before it can enter the dataset.
+ */
+
+const OUTLETS = ['ESPN', 'NBC Sports', 'The Athletic', 'Yahoo Sports', 'CBS Sports', 'RotoBaller'];
+const COLLEGE = ['Dylan Raiola', 'Jeremiah Smith', 'Carson Beck', 'Nico Iamaleava', 'Julian Sayin'];
+const ADD_REASONS = [
+  'a starter ahead of him is out',
+  'he has taken over the lead role',
+  'he played most of the snaps last week',
+  'he draws one of the softest matchups of the week',
+  'his target share has climbed two weeks running',
+];
+
+const surnameOf = (name: string): string => name.split(' ').slice(1).join(' ') || name;
+const fenced = (value: unknown): string => ['```json', JSON.stringify(value, null, 2), '```'].join('\n');
+
+function must(ok: boolean, message: string): void {
+  if (!ok) throw new Error(message);
+}
+
+/** A month and day pair, and dates counted back from it. */
+function calendar(): { today: string; date: (back: number) => string } {
+  const day = int(9, 27);
+  const month = pick(['09', '10', '11']);
+  const date = (back: number): string => `2026-${month}-${String(day - back).padStart(2, '0')}`;
+  return { today: date(0), date };
+}
+
+type NewsShape = 'none' | 'recap' | 'teammate' | 'resolved' | 'out' | 'doubtful' | 'questionable' | 'role';
+/** Shapes that change a player's outlook, and so must be reported. */
+const REPORTED: readonly NewsShape[] = ['out', 'doubtful', 'questionable', 'role'];
+
+interface Want {
+  readonly player: string;
+  readonly status: string;
+  readonly factor: number;
+  readonly summary: string;
+  readonly urls: string[];
+}
+
+function newsPrompt(promptId: string): Prompt {
+  const draw = drawer();
+  const { today, date } = calendar();
+  const week = int(1, 17);
+  // Now and then nothing has changed, so the answer is an empty findings list.
+  const quiet = chance(0.15);
+  const shapes: NewsShape[] = quiet
+    ? Array.from({ length: int(2, 4) }, () => pick<NewsShape>(['none', 'recap', 'teammate', 'resolved']))
+    : [
+        pick<NewsShape>(REPORTED),
+        ...Array.from({ length: int(1, 3) }, () =>
+          pick<NewsShape>(['none', 'recap', 'teammate', 'resolved', 'questionable', 'out']),
+        ),
+      ];
+
+  const players: ResearchPlayer[] = [];
+  const items: DigestItem[] = [];
+  const want: Want[] = [];
+
+  shapes.forEach((shape, index) => {
+    const pos = pick<Pos>(['QB', 'RB', 'RB', 'WR', 'WR', 'TE']);
+    const p = draw(pos);
+    const id = String(100 + index);
+    const name = p.name;
+    const surname = surnameOf(name);
+    const injury = pick(INJURIES);
+    const source = pick(OUTLETS);
+    const url = (n: number): string => `https://example.com/${id}/${n}`;
+    const add = (n: number, back: number, title: string, text: string): string => {
+      items.push({ playerId: id, url: url(n), source, published: date(back), title, text });
+      return url(n);
+    };
+
+    const player: ResearchPlayer = {
+      id,
+      name,
+      position: pos,
+      proTeam: p.team,
+      projected: proj(...RANGE[pos]),
+      role: pick(['starter', 'starter', 'bench', 'pickup']),
+    };
+
+    if (shape === 'recap') {
+      add(1, int(1, 4), `${surname} quiet in the loss`, `${name} finished with modest production in last week's game.`);
+    } else if (shape === 'teammate') {
+      const other = draw(pos);
+      add(
+        1,
+        int(0, 3),
+        `${surnameOf(other.name)} sidelined`,
+        `${other.name} is expected to miss time with a ${injury} injury. ${name} was not involved in the report.`,
+      );
+    } else if (shape === 'resolved') {
+      add(2, int(3, 5), `${surname} limited in practice`, `${name} was limited on Wednesday with a ${injury} injury.`);
+      add(1, int(0, 1), `${surname} a full participant`, `${name} practiced in full and carries no designation into week ${week}.`);
+    } else if (shape === 'out') {
+      const d = date(int(0, 2));
+      items.push({
+        playerId: id,
+        url: url(1),
+        source,
+        published: d,
+        title: `${surname} ruled out for week ${week}`,
+        text: `${name} will not play in week ${week} because of a ${injury} injury.`,
+      });
+      want.push({
+        player: name,
+        status: 'out',
+        factor: 0,
+        summary: `${name} was ruled out of the week ${week} game with a ${injury} injury (reported ${d}).`,
+        urls: [url(1)],
+      });
+    } else if (shape === 'doubtful') {
+      const d = date(int(0, 2));
+      items.push({
+        playerId: id,
+        url: url(1),
+        source,
+        published: d,
+        title: `${surname} did not practice`,
+        text: `${name} missed practice all week with a ${injury} injury and is listed as doubtful for week ${week}.`,
+      });
+      want.push({
+        player: name,
+        status: 'doubtful',
+        factor: 0.4,
+        summary: `${name} missed practice all week with a ${injury} injury and is doubtful for week ${week} (reported ${d}).`,
+        urls: [url(1)],
+      });
+    } else if (shape === 'questionable') {
+      const d = date(int(0, 3));
+      items.push({
+        playerId: id,
+        url: url(1),
+        source,
+        published: d,
+        title: `${surname} limited in practice`,
+        text: `${name} was limited in practice with a ${injury} injury and is listed as questionable for week ${week}.`,
+      });
+      want.push({
+        player: name,
+        status: 'questionable',
+        factor: 0.8,
+        summary: `${name} was limited in practice with a ${injury} injury and is questionable for week ${week} (reported ${d}).`,
+        urls: [url(1)],
+      });
+    } else if (shape === 'role') {
+      const ahead = draw(pos);
+      const d = date(int(0, 2));
+      // The app puts an injured teammate ahead of a player on their line.
+      Object.assign(player, { context: `${ahead.name}, ahead of them at ${pos}, is out` });
+      items.push({
+        playerId: id,
+        url: url(1),
+        source,
+        published: d,
+        title: `${surname} in line for the lead role`,
+        text: `With ${ahead.name} out, the coaching staff said ${name} will handle the starter's work in week ${week}.`,
+      });
+      want.push({
+        player: name,
+        status: 'active',
+        factor: 1.15,
+        summary: `With ${ahead.name} out, ${name} is in line for the lead role in week ${week} (reported ${d}).`,
+        urls: [url(1)],
+      });
+    }
+    players.push(player);
+  });
+
+  const { request, sources } = newsDigestRequest({ leagueName: pick(LEAGUES), week, today, players, items });
+  const number = new Map(sources.map((s, i) => [s.url, i + 1]));
+  const findings = want.map((w) => ({
+    player: w.player,
+    status: w.status,
+    factor: w.factor,
+    summary: w.summary,
+    sources: w.urls.map((u) => number.get(u)!),
+  }));
+  const answer = fenced({ findings });
+
+  const parsed = parseNewsFindings(answer, players, sources, { numbered: true });
+  must(parsed.rejected.length === 0, `${promptId}: rejected ${parsed.rejected.map((r) => `${r.player} (${r.reason})`).join('; ')}`);
+  must(parsed.findings.length === findings.length, `${promptId}: parsed ${parsed.findings.length} of ${findings.length} findings`);
+  for (const f of parsed.findings) {
+    const expected = findings.find((x) => x.player === f.playerName);
+    must(expected !== undefined, `${promptId}: parsed an unexpected finding for ${f.playerName}`);
+    must(f.factor === expected!.factor, `${promptId}: ${f.playerName} factor ${f.factor}, expected ${expected!.factor}`);
+    must(f.status === expected!.status, `${promptId}: ${f.playerName} status ${f.status}`);
+  }
+
+  return {
+    id: promptId,
+    task: 'news',
+    request,
+    facts: `${request.system}\n${request.user}`,
+    json: { players, sources, expected: findings.map((f) => f.player) },
+    answer,
+  };
+}
+
+type ArticleKind = 'adds' | 'headline' | 'drops' | 'college' | 'other-week' | 'streamer';
+
+function picksPrompt(promptId: string): Prompt {
+  const draw = drawer();
+  const { today, date } = calendar();
+  const week = int(1, 16);
+  const quiet = chance(0.15);
+  const kinds: ArticleKind[] = quiet
+    ? Array.from({ length: int(2, 4) }, () => pick<ArticleKind>(['drops', 'college', 'other-week']))
+    : [
+        'adds',
+        ...Array.from({ length: int(2, 5) }, () =>
+          pick<ArticleKind>(['adds', 'headline', 'streamer', 'drops', 'college', 'other-week']),
+        ),
+      ];
+
+  const items: WaiverArticle[] = [];
+  const named = new Map<string, { position: string; reason: string; urls: string[] }>();
+  const mention = (name: string, position: string, url: string): void => {
+    const hit = named.get(name);
+    if (hit) hit.urls.push(url);
+    else named.set(name, { position, reason: pick(ADD_REASONS), urls: [url] });
+  };
+
+  kinds.forEach((kind, index) => {
+    const source = pick(['FantasyPros', 'CBS Sports', 'Yahoo Sports', 'ESPN', 'RotoBaller', 'The Athletic']);
+    const url = `https://example.com/waivers/${index + 1}`;
+    const published = date(int(0, 4));
+    const push = (title: string, text?: string): void => {
+      items.push({ url, source, published, title, ...(text ? { text } : {}) });
+    };
+
+    if (kind === 'adds') {
+      const picks = Array.from({ length: int(1, 3) }, () => draw(pick<Pos>(['RB', 'RB', 'WR', 'WR', 'TE', 'QB'])));
+      for (const p of picks) mention(p.name, p.pos, url);
+      push(
+        `Week ${week} waiver wire: ${picks.map((p) => p.name).join(', ')} lead the adds`,
+        picks.map((p) => `${p.name} (${p.pos}) is worth a claim this week.`).join(' '),
+      );
+    } else if (kind === 'headline') {
+      const p = draw(pick<Pos>(['RB', 'WR', 'TE']));
+      mention(p.name, p.pos, url);
+      push(`Add ${p.name} before week ${week}`);
+    } else if (kind === 'streamer') {
+      const d = draw('DST');
+      mention(d.name, 'DST', url);
+      push(`Week ${week} streaming defenses: start ${d.name}`, `${d.name} is the best streaming defense available for week ${week}.`);
+    } else if (kind === 'drops') {
+      const a = draw(pick<Pos>(['RB', 'WR']));
+      const b = draw(pick<Pos>(['WR', 'TE']));
+      push(`Week ${week} drop candidates: ${a.name} and ${b.name}`, `${a.name} and ${b.name} can be cut loose in most leagues.`);
+    } else if (kind === 'college') {
+      const a = pick(COLLEGE);
+      push(`College football: ${a} headlines Saturday's slate`, `${a} threw for three touchdowns in a college game.`);
+    } else {
+      const p = draw(pick<Pos>(['RB', 'WR']));
+      push(`Week ${week + 5} preview: ${p.name} could matter later`, `${p.name} is worth stashing for week ${week + 5}, not for week ${week}.`);
+    }
+  });
+
+  const { request, sources } = waiverPicksDigestRequest({ week, today, items });
+  const number = new Map(sources.map((s, i) => [s.url, i + 1]));
+  const picks = [...named.entries()]
+    .sort((a, b) => b[1].urls.length - a[1].urls.length)
+    .map(([player, info]) => ({
+      player,
+      position: info.position,
+      reason: `${player} is named a top week ${week} add because ${info.reason}.`,
+      sources: [...new Set(info.urls.map((u) => number.get(u)!))],
+    }));
+  const answer = fenced({ picks });
+
+  const parsed = parseWaiverPicks(answer, sources, { numbered: true });
+  must(parsed.rejected.length === 0, `${promptId}: rejected ${parsed.rejected.map((r) => `${r.player} (${r.reason})`).join('; ')}`);
+  must(parsed.picks.length === picks.length, `${promptId}: parsed ${parsed.picks.length} of ${picks.length} picks`);
+
+  return {
+    id: promptId,
+    task: 'picks',
+    request,
+    facts: `${request.system}\n${request.user}`,
+    json: { sources, expected: picks.map((p) => p.player) },
+    answer,
+  };
+}
+
 // ---------------------------------------------------------------- write
 
 const id = (prefix: string, n: number): string => `${prefix}${String(n).padStart(3, '0')}`;
@@ -491,13 +803,26 @@ const prompts: Prompt[] = [
   ...Array.from({ length: 90 }, (_, n) => lineupPrompt(id('L', n + 1))),
   ...Array.from({ length: 60 }, (_, n) => pitchPrompt(id('P', n + 1))),
   ...Array.from({ length: 90 }, (_, n) => chatPrompt(id('C', n + 1), n)),
+  // Appended last, so the seeded draws above are unchanged by their arrival.
+  ...Array.from({ length: 30 }, (_, n) => newsPrompt(id('N', n + 1))),
+  ...Array.from({ length: 20 }, (_, n) => picksPrompt(id('W', n + 1))),
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dataDir = join(here, 'data');
 const sheetDir = join(dataDir, 'sheets');
 mkdirSync(sheetDir, { recursive: true });
-writeFileSync(join(dataDir, 'prompts.jsonl'), prompts.map((p) => JSON.stringify(p)).join('\n') + '\n', 'utf8');
+const written = prompts.map(({ answer: _answer, ...rest }) => rest);
+writeFileSync(join(dataDir, 'prompts.jsonl'), written.map((p) => JSON.stringify(p)).join('\n') + '\n', 'utf8');
+
+// The JSON tasks' answers follow from their fixtures, so they are generated here
+// rather than written by hand; the prose tasks' answers stay in answers.jsonl.
+const generated = prompts.flatMap((p) => (p.answer === undefined ? [] : [{ id: p.id, answer: p.answer }]));
+writeFileSync(
+  join(dataDir, 'answers-generated.jsonl'),
+  generated.map((a) => JSON.stringify(a)).join('\n') + '\n',
+  'utf8',
+);
 
 const sheet = (p: Prompt): string => {
   if (p.task === 'chat') {
@@ -506,9 +831,16 @@ const sheet = (p: Prompt): string => {
   }
   return [`### ${p.id} (${p.task}${p.givesUp ? `, must not name ${p.givesUp}` : ''})`, p.facts].join('\n');
 };
+// Sheets are for the prompts a human answers; the JSON tasks answer themselves.
+const forSheets = prompts.filter((p) => p.answer === undefined);
 const PER_SHEET = 30;
-for (let i = 0; i < prompts.length; i += PER_SHEET) {
-  const chunk = prompts.slice(i, i + PER_SHEET);
+for (let i = 0; i < forSheets.length; i += PER_SHEET) {
+  const chunk = forSheets.slice(i, i + PER_SHEET);
   writeFileSync(join(sheetDir, `${chunk[0]!.id}-${chunk.at(-1)!.id}.md`), chunk.map(sheet).join('\n\n') + '\n', 'utf8');
 }
-console.log(`${prompts.length} prompts: ${prompts.filter((p) => p.task === 'lineup').length} lineup, ${prompts.filter((p) => p.task === 'pitch').length} pitch, ${prompts.filter((p) => p.task === 'chat').length} chat (${prompts.filter((p) => p.unanswerable).length} unanswerable)`);
+const count = (task: Prompt['task']): number => prompts.filter((p) => p.task === task).length;
+console.log(
+  `${prompts.length} prompts: ${count('lineup')} lineup, ${count('pitch')} pitch, ${count('chat')} chat ` +
+    `(${prompts.filter((p) => p.unanswerable).length} unanswerable), ${count('news')} news, ${count('picks')} picks; ` +
+    `${generated.length} answers generated`,
+);

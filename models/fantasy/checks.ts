@@ -4,9 +4,18 @@
  * the LoRA dataset builder, so training data is held to the bar the eval measures.
  */
 
-import { checkNumbers, namesIn, pitchReasonOk } from '../../packages/llm/src/index.js';
+import {
+  checkNumbers,
+  namesIn,
+  parseNewsFindings,
+  parseWaiverPicks,
+  pitchReasonOk,
+  type ResearchPlayer,
+  type ResearchSource,
+} from '../../packages/llm/src/index.js';
+import { FACTOR_RANGE, type NewsStatus } from '../../packages/core/src/index.js';
 
-export type Task = 'lineup' | 'pitch' | 'chat';
+export type Task = 'lineup' | 'pitch' | 'chat' | 'news' | 'picks';
 
 export interface Checkable {
   readonly task: Task;
@@ -16,6 +25,15 @@ export interface Checkable {
   readonly givesUp?: string;
   /** Chat only: the brief cannot answer this, and the answer should say so. */
   readonly unanswerable?: boolean;
+  /**
+   * JSON tasks: what the app's parser needs, and the players the fixture's items
+   * support. The answer is judged by the app's own parser, not by prose checks.
+   */
+  readonly json?: {
+    readonly players?: readonly ResearchPlayer[];
+    readonly sources: readonly ResearchSource[];
+    readonly expected: readonly string[];
+  };
 }
 
 export interface Verdict {
@@ -41,7 +59,76 @@ const PADDING = /\b(monitor|keep an eye|risk tolerance|stay tuned|injury report|
 const ADMITS_GAP =
   /(\bnot\b|n't\b)[^.]{0,60}\b(include|cover|say|have|contain|mention|provide|list|available|know|show)|\bno (information|data|stats|statistics)\b|\bcan(not|'t) (tell|say|answer)/i;
 
+/**
+ * A JSON answer: the app parses it rather than showing it, so "shown" means the
+ * parser accepted it. The fence is checked separately — the app tolerates a
+ * missing one now, but it is the format the prompt asks for and what we teach.
+ */
+function scoreJson(c: Checkable, text: string): Verdict {
+  const flags: string[] = [];
+  const json = c.json!;
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  if (fences.length === 0) flags.push('no fenced block');
+  else {
+    if (fences.length > 1) flags.push(`${fences.length} fenced blocks`);
+    const after = text.slice(text.lastIndexOf('```') + 3).trim();
+    if (after) flags.push(`text after the block: ${after.slice(0, 40)}`);
+  }
+
+  let named: string[];
+  let rejected: readonly { readonly player: string; readonly reason: string }[];
+  try {
+    if (c.task === 'news') {
+      const parsed = parseNewsFindings(text, json.players ?? [], json.sources, { numbered: true });
+      named = parsed.findings.map((f) => f.playerName);
+      rejected = parsed.rejected;
+      // The parser clamps a factor into its range; an answer should not need it.
+      for (const raw of rawItems(text, 'findings')) {
+        const status = String(raw['status']);
+        const factor = raw['factor'];
+        const range = FACTOR_RANGE[status as NewsStatus];
+        if (range && typeof factor === 'number' && (factor < range[0] || factor > range[1])) {
+          flags.push(`factor ${factor} outside ${status} ${range[0]}-${range[1]}`);
+        }
+      }
+    } else {
+      const parsed = parseWaiverPicks(text, json.sources, { numbered: true });
+      named = parsed.picks.map((p) => p.name);
+      rejected = parsed.rejected;
+      // The picks parser takes any name, so an invented one only shows up here.
+      for (const name of named) {
+        if (!c.facts.toLowerCase().includes(name.toLowerCase())) flags.push(`not named in the items: ${name}`);
+      }
+    }
+  } catch (error) {
+    flags.push(`parser: ${error instanceof Error ? error.message : String(error)}`);
+    return { shown: false, flags };
+  }
+
+  for (const r of rejected) flags.push(`dropped ${r.player}: ${r.reason}`);
+  const lower = (xs: readonly string[]) => xs.map((x) => x.toLowerCase());
+  const missed = json.expected.filter((name) => !lower(named).includes(name.toLowerCase()));
+  const extra = named.filter((name) => !lower(json.expected).includes(name.toLowerCase()));
+  if (missed.length > 0) flags.push(`missed: ${missed.join(', ')}`);
+  if (extra.length > 0) flags.push(`the items do not support: ${extra.join(', ')}`);
+  return { shown: true, flags };
+}
+
+/** The objects under a key in the answer's last JSON block, for checks the parser does not make. */
+function rawItems(text: string, key: 'findings' | 'picks'): Record<string, unknown>[] {
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  const body = fences.at(-1)?.[1] ?? text.slice(text.lastIndexOf(`{"${key}"`));
+  try {
+    const parsed = JSON.parse(body.trim()) as Record<string, unknown>;
+    const items = parsed[key];
+    return Array.isArray(items) ? (items.filter((x) => x && typeof x === 'object') as Record<string, unknown>[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function score(c: Checkable, text: string): Verdict {
+  if (c.task === 'news' || c.task === 'picks') return scoreJson(c, text);
   const flags: string[] = [];
   const invented = checkNumbers(text, c.facts).invented;
   if (invented.length > 0) flags.push(`invented numbers: ${invented.join(', ')}`);

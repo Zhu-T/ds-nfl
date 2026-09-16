@@ -17,11 +17,13 @@ space, and both use the same VRAM as the stock model.
 ```
 npx vite-node models/fantasy/eval.ts
 npx vite-node models/fantasy/eval.ts -- --runs 5 deepseek-r1:14b ds-nfl-lora
+npx vite-node models/fantasy/eval.ts -- --tasks news,picks ds-nfl-lora
 ```
 
-Eight cases (three lineups, two trade pitches, three League AI questions, one of
-which the brief cannot answer) go through the app's own provider, prompts, and fact
-builders. Each answer is scored by the checks the app runs before showing one
+Thirteen cases go through the app's own provider, prompts, and fact builders:
+eight prose ones (three lineups, two trade pitches, three League AI questions, one
+of which the brief cannot answer) and five JSON ones (three news digests, two
+waiver-pick reads). `--tasks` runs a subset. Each answer is scored by the checks the app runs before showing one
 (invented numbers, and for pitches naming the player given up), plus heuristics
 for what those checks miss: markdown, lists, length, NFL teams the facts never
 mention, generic advice, overstating a trade's gain, scouting claims, and not
@@ -30,6 +32,56 @@ A transcript of every answer goes to `models/fantasy/results/`, which is not com
 
 The eval's players and team names are not used anywhere in the training data, so
 it is a held-out test for the fine-tune.
+
+## The JSON tasks
+
+The app asks a model for prose three times and for a JSON block twice: the news
+check's digest (`{"findings": [...]}`) and the waiver-wire picks
+(`{"picks": [...]}`). The first training set had only the prose tasks, and it
+shows.
+
+Measured on 2026-09-16, three runs of each of the five JSON cases:
+
+| model | parsed | news | picks | no code fence | text after the block | median |
+| --- | --- | --- | --- | --- | --- | --- |
+| `deepseek-r1:14b` | 15/15 | 9/9 | 6/6 | 0 | 0 | 6.3 s |
+| `ds-nfl-lora` | 15/15 | 9/9 | 6/6 | 7 | 2 | 1.3 s |
+
+Both models are parsed every time only because `lastJsonBlock` now accepts an
+unfenced block, one written twice, and trailing text. Before that change the
+fine-tune's unfenced answers were rejected outright, which is what
+"The model did not end with picks in the agreed format" was in the app.
+
+Format is not the only problem, and the other one moves projections. Neither
+model leaves alone a player whose items support nothing:
+
+- both reported a player whose injury a later item resolved — as a role change
+  with a factor of **1.25**, a quarter added to the projection of a player the
+  news says is healthy;
+- `ds-nfl-lora` cut Jaylen Warren by a quarter (`questionable`, 0.75) on an item
+  that was only a game recap, and stock cut Rhamondre Stevenson by a tenth.
+
+Each factor is inside the range for its status, so the app applies it. The eval
+flags these because the items do not support them.
+
+### The prompts and their answers
+
+Unlike the prose tasks, these answers are not written by hand. `make-prompts.ts`
+synthesizes the items, so it knows the findings and picks they support, and
+generates the target with the prompt: players with no news, a clear injury, a
+report a later item resolves, an item about a teammate, and articles that name
+drops, college players, or another week, which must be ignored. Roughly one in
+six examples supports nothing, so the answer is `{"findings": []}` or
+`{"picks": []}`.
+
+Every generated target goes through the app's own parser before it can enter the
+dataset, and `checks.ts` scores a JSON answer on the fence, trailing text, what
+the parser accepted, factors inside their range, invented players, and whether
+the answer names exactly what the items support. The targets live in
+`data/answers-generated.jsonl`; `data/answers.jsonl` stays the hand-written prose.
+
+Counts after adding them: 290 prompts, 261 train and 29 validation — 90 lineup,
+60 pitch, 90 chat, 30 news, 20 picks.
 
 ## ds-nfl-lora: the fine-tune
 

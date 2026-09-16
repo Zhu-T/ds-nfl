@@ -8,7 +8,7 @@
  * listed rather than trained on.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { score, type Checkable } from '../checks.js';
@@ -43,7 +43,12 @@ const readJsonl = <T,>(path: string): T[] =>
 
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), 'data');
 const prompts = readJsonl<PromptRow>(join(dataDir, 'prompts.jsonl'));
-const answers = new Map(readJsonl<AnswerRow>(join(dataDir, 'answers.jsonl')).map((a) => [a.id, a.answer.trim()]));
+// Hand-written answers for the prose tasks, and the JSON tasks' answers, which
+// make-prompts.ts generates from the same fixtures it builds the prompts from.
+const written = readJsonl<AnswerRow>(join(dataDir, 'answers.jsonl'));
+const generatedPath = join(dataDir, 'answers-generated.jsonl');
+const generated = existsSync(generatedPath) ? readJsonl<AnswerRow>(generatedPath) : [];
+const answers = new Map([...written, ...generated].map((a) => [a.id, a.answer.trim()]));
 
 const kept: { id: string; task: string; prompt: string; completion: string }[] = [];
 const rejected: string[] = [];
@@ -70,6 +75,9 @@ writeFileSync(join(dataDir, 'train.jsonl'), jsonl(train), 'utf8');
 writeFileSync(join(dataDir, 'val.jsonl'), jsonl(val), 'utf8');
 
 const byTask = (task: string): number => kept.filter((k) => k.task === task).length;
-console.log(`${kept.length} kept (lineup ${byTask('lineup')}, pitch ${byTask('pitch')}, chat ${byTask('chat')}): ${train.length} train, ${val.length} val`);
+console.log(
+  `${kept.length} kept (lineup ${byTask('lineup')}, pitch ${byTask('pitch')}, chat ${byTask('chat')}, ` +
+    `news ${byTask('news')}, picks ${byTask('picks')}): ${train.length} train, ${val.length} val`,
+);
 if (missing.length > 0) console.log(`${missing.length} prompts have no answer yet: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ', ...' : ''}`);
 if (rejected.length > 0) console.log(`${rejected.length} rejected:\n  ${rejected.join('\n  ')}`);
