@@ -1,0 +1,18 @@
+# Normalize to LF in the repository, and check out with LF by default.
+* text=auto eol=lf
+
+# Windows batch files MUST be CRLF on disk. cmd.exe resolves `goto` labels by
+# seeking through the file, and with LF-only endings that lookup fails
+# intermittently — a label later in the file resolves while an earlier one does
+# not. It is not a style preference; the script breaks without it.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets git should never try to normalize.
+*.png binary
+*.jpg binary
+*.ico binary
+*.parquet binary
+*.db binary
+*.gz binary

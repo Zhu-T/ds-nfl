@@ -1,0 +1,24 @@
+{
+  "name": "@ds-nfl/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "//": "Bind to loopback only. This is a single-user local app holding league credentials; the default binds every interface and exposes it to the LAN.",
+    "dev": "next dev -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1"
+  },
+  "dependencies": {
+    "@ds-nfl/core": "*",
+    "@ds-nfl/adapters": "*",
+    "@ds-nfl/llm": "*",
+    "server-only": "^0.0.1",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

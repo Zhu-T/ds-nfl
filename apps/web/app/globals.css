@@ -1,0 +1,1561 @@
+/* ==========================================================================
+   Slate Console.
+
+   Evolved from the previous build's "Broadcast Booth". The football vocabulary
+   stays — referee-flag gold, depth-chart position hues, scoreboard mono
+   numerals, hash-mark rules for yard lines — but the ground is now a neutral
+   charcoal rather than turf green. The green felt competed with the position
+   colours for attention; a neutral ground lets them advance and lets the
+   numbers read first, which is what a decision surface needs.
+
+   One deliberate contrast: the score bug is hard-edged and full-bleed, the
+   way a broadcast overlay is. Everything else is soft-cornered card stock.
+
+   Every foreground token below clears 4.5:1 against the surface it sits on,
+   in both themes.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  --bg: #0e1116;
+  --surface: #161b22;
+  --surface-2: #1c232c;
+  --surface-hover: #232b36;
+  --border: #232a35;
+  --border-strong: #333d4b;
+
+  --text: #e6edf3;
+  --text-muted: #9aa7b4;
+  --text-dim: #7b8896;
+
+  --accent: #e8b93f;
+  --accent-ink: #1c1602;
+
+  --pos-qb: #ff7a66;
+  --pos-rb: #4ade80;
+  --pos-wr: #60a5fa;
+  --pos-te: #c084fc;
+  /* K and D/ST are low-leverage slots; they get muted metal rather than a hue
+     so the eye goes to the positions that actually decide a week. They differ
+     by warmth, not hue — cool steel and warm taupe.
+     D/ST is deliberately desaturated: at full chroma it lands within a few
+     degrees of the gold accent, and its slot edge then reads as a FLEX edge. */
+  --pos-k: #8b98a5;
+  --pos-dst: #a3968c;
+  --pos-flex: var(--accent);
+
+  --gain: #4ade80;
+  --loss: #ff7a66;
+
+  --font-display: 'Anton', 'Arial Narrow', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  --rail: 264px;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --surface-hover: #e4e9f0;
+  --border: #d8dee6;
+  --border-strong: #bcc5d0;
+
+  --text: #11161d;
+  --text-muted: #4d5865;
+  --text-dim: #68737f;
+
+  --accent: #8a6200;
+  --accent-ink: #fff8e8;
+
+  /* Darkened from #d1442b, which cleared 4.5:1 on white cards but not on the
+     page ground behind them. */
+  --pos-qb: #c23c25;
+  --pos-rb: #167c45;
+  --pos-wr: #1f6fd0;
+  --pos-te: #8b3fd1;
+  --pos-k: #5f6b78;
+  /* Was #8a6320, which is all but identical to this theme's accent (#8a6200). */
+  --pos-dst: #6f6459;
+
+  --gain: #167c45;
+  --loss: #c23c25;
+
+  --shadow-card: 0 8px 20px rgba(17, 22, 29, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Yard-line hash marks. Used as a section rule, never as decoration for its
+   own sake — it separates one decision from the next. */
+.hashrule {
+  height: 6px;
+  border: 0;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--border-strong) 0 2px,
+    transparent 2px 12px
+  );
+  opacity: 0.7;
+}
+
+:where(a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+:where(button, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- score bug: the one hard-edged element ---------- */
+
+.scorebug {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.scorebug__seg {
+  background: var(--surface);
+  padding: 0.55rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+}
+
+.scorebug__seg--brand {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-display);
+  letter-spacing: 0.06em;
+  font-size: 1.05rem;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.scorebug__seg--grow {
+  flex: 1;
+}
+
+.scorebug__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.scorebug__value {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.scorebug__value--big {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.scorebug__seg--team {
+  align-items: flex-end;
+  text-align: right;
+  min-width: 8rem;
+}
+
+.scorebug__seg--icon {
+  padding-inline: 0.5rem;
+  justify-content: center;
+}
+
+.scorebug__seg--vs {
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding-inline: 0.6rem;
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  min-height: calc(100vh - 57px);
+}
+
+.rail {
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.rail__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.rail__eyebrow {
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 700;
+  padding: 0 0.65rem 0.4rem;
+}
+
+.rail__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-weight: 500;
+  border-left: 2px solid transparent;
+}
+
+.rail__link:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.rail__link[aria-current='page'] {
+  background: var(--surface-2);
+  color: var(--text);
+  border-left-color: var(--accent);
+}
+
+.rail__badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.main {
+  padding: 1.5rem clamp(1rem, 3vw, 2.25rem) 4rem;
+  max-width: 1120px;
+}
+
+/* ---------- verdict: the answer, stated first ---------- */
+
+.verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 1.15rem 1.35rem;
+}
+
+.verdict--settled {
+  border-left-color: var(--gain);
+}
+
+.verdict__figure {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 6vw, 3.1rem);
+  line-height: 0.9;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict--settled .verdict__figure {
+  color: var(--gain);
+}
+
+.verdict__body {
+  flex: 1;
+  min-width: 15rem;
+}
+
+.verdict__title {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+
+.verdict__note {
+  color: var(--text-muted);
+  font-size: 0.87rem;
+}
+
+.verdict__note--sub {
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  padding: 0.35rem 0.6rem;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* ---------- section heads ---------- */
+
+.section {
+  margin-top: 2.25rem;
+}
+
+.section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.section__title {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.section__meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- slot rail: the signature ---------- */
+
+.slots {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.slot {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 1rem 0.7rem 0;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--slot-hue, var(--border-strong));
+}
+
+.slot:first-child {
+  border-top: 0;
+}
+
+.slot--changed {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.slot__tag {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: var(--slot-hue, var(--text-muted));
+  text-transform: uppercase;
+}
+
+.slot__name {
+  font-weight: 600;
+}
+
+.slot__sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.slot__pts {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.02rem;
+  font-weight: 500;
+  text-align: right;
+}
+
+.slot__empty {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* the substitution itself */
+.swap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.swap__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.swap__out .swap__who {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--loss);
+}
+
+.swap__in .swap__who {
+  font-weight: 700;
+}
+
+.swap__mark {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+}
+
+.swap__mark--out {
+  color: var(--loss);
+  border: 1px solid color-mix(in srgb, var(--loss) 45%, transparent);
+}
+
+.swap__mark--in {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.swap__pts {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.delta {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--gain);
+}
+
+.delta--down {
+  color: var(--loss);
+}
+
+/* ---------- bench ---------- */
+
+.bench {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.6rem;
+}
+
+.benchcard {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--slot-hue, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.benchcard--out {
+  opacity: 0.62;
+}
+
+.benchcard__pts {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.flag {
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--loss);
+}
+
+/* ---------- sample-data notice ----------
+   The previous build silently substituted fabricated rosters when auth failed,
+   and those fakes reached real recommendations. Sample data is always labelled. */
+
+.notice {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.9rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  background: var(--surface-2);
+  margin-bottom: 1.25rem;
+}
+
+.notice--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--loss) 55%, var(--border));
+  background: color-mix(in srgb, var(--loss) 8%, var(--surface));
+  color: var(--text);
+}
+
+.notice__tag--error {
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
+.notice__tag {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+/* ---------- empty / placeholder screens ---------- */
+
+.placeholder {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.placeholder__title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 0.4rem;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 860px) {
+  .shell {
+    /* minmax(0, ...) so a wide table scrolls inside its box instead of widening the page. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 0.35rem;
+    padding: 0.6rem;
+  }
+  .rail__eyebrow {
+    display: none;
+  }
+  .rail__group {
+    flex-direction: row;
+    gap: 0.25rem;
+  }
+  .rail__link {
+    white-space: nowrap;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+  }
+  .rail__link[aria-current='page'] {
+    border-left: 0;
+    border-bottom-color: var(--accent);
+  }
+  /* The score bug must not wrap — a four-line header pushes the matchup, which
+     is the whole point of it, off the screen. Constant context (league, format,
+     week) and the derivable margin drop away; the two scores stay.
+     flex-shrink is pinned off so segments never collapse into each other, and
+     the container scrolls as a last resort rather than overlapping. */
+  .scorebug {
+    overflow-x: auto;
+  }
+  .scorebug__seg {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding-inline: 0.6rem;
+  }
+  .scorebug__seg--secondary,
+  .scorebug__seg--grow {
+    display: none;
+  }
+  .scorebug__seg--team {
+    min-width: 0;
+    max-width: 8rem;
+  }
+  .scorebug__seg--team .scorebug__label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .scorebug__seg--brand {
+    font-size: 0.9rem;
+  }
+  .slot {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+    gap: 0.6rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- forms ---------- */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 44rem;
+}
+
+.form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1rem;
+}
+
+.form__actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field__label {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.field__input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+}
+
+.field__input--mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.field__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.field__hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* ---------- icon button ---------- */
+
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.iconbtn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.iconbtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- apply result ---------- */
+
+.apply {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.apply__result {
+  font-size: 0.83rem;
+  color: var(--gain);
+  max-width: 22rem;
+}
+
+.apply__result--error {
+  color: var(--loss);
+}
+
+/* ---------- tables ---------- */
+
+.tablewrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table th {
+  text-align: left;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 700;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 0.55rem 1rem;
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.table__num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.table__mono {
+  font-family: var(--font-mono);
+}
+
+.table__dim {
+  color: var(--text-muted);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--slot-hue, var(--border-strong));
+  margin-right: 0.55rem;
+  vertical-align: middle;
+}
+
+/* ---------- player search ---------- */
+
+.players-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.players-search .field__input {
+  flex: 1 1 18rem;
+  max-width: 28rem;
+}
+
+/* ---------- evaluate a player ---------- */
+
+.evaluate__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.evaluate__form .field__input {
+  flex: 1 1 16rem;
+  max-width: 26rem;
+}
+
+.evaluate__choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.evaluate__verdict {
+  margin: 0.45rem 0 0;
+  font-weight: 600;
+}
+
+.evaluate__web {
+  margin-top: 0.8rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+
+.evaluate__web-head {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: 0.4rem;
+}
+
+.evaluate__news {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+}
+
+.evaluate__news li {
+  overflow-wrap: anywhere;
+}
+
+.evaluate__news a {
+  color: var(--text);
+}
+
+.evaluate__src {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.evaluate__snippet {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.evaluate__read {
+  margin-top: 0.6rem;
+  font-size: 0.86rem;
+}
+
+.evaluate__read p {
+  margin: 0.2rem 0 0;
+}
+
+.evaluate__facts {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  display: grid;
+  gap: 0.2rem;
+}
+
+/* ---------- ownership ---------- */
+
+.owner {
+  color: var(--text-muted);
+}
+
+.owner--mine {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* An instant add is the actionable case, so it gets the "good" colour. */
+.owner--free {
+  color: var(--gain);
+  font-weight: 600;
+}
+
+.owner--waivers {
+  color: var(--text);
+}
+
+/* ---------- AI layer ---------- */
+
+.ai__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  max-width: 46rem;
+  margin-bottom: 1rem;
+}
+
+.ai__list .field__hint {
+  flex: 1 1 22rem;
+}
+
+.ai {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+/* Blue edge, not gold: gold means "the engine recommends", and this is commentary on it. */
+.ai__text {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--pos-wr);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0.85rem 1rem;
+  max-width: 46rem;
+  line-height: 1.55;
+}
+
+.ai__text .ai__attr {
+  margin-top: 0.5rem;
+}
+
+.ai__attr {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.ai__error {
+  color: var(--loss);
+  font-size: 0.85rem;
+  max-width: 46rem;
+}
+
+.ai__off {
+  margin-top: 0.75rem;
+  font-size: 0.83rem;
+  color: var(--text-muted);
+}
+
+.ai__off a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.pitch {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.pitch__text {
+  font-size: 0.86rem;
+  color: var(--text);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  max-width: 40rem;
+  white-space: pre-wrap;
+}
+
+.pitch__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.choice {
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.choice__option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.choice__option:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.choice__option strong {
+  display: block;
+}
+
+/* ---------- news ---------- */
+
+.news {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.news__item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--slot-hue, var(--border-strong));
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0.6rem 0.85rem;
+}
+
+.news__item summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.6rem;
+  align-items: baseline;
+}
+
+.news__item summary::-webkit-details-marker {
+  display: none;
+}
+
+.news__who {
+  font-weight: 600;
+}
+
+.news__when {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.news__headline {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.news__story {
+  margin-top: 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+/* ---------- league AI ---------- */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 52rem;
+}
+
+.chat__log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+
+.chat__empty {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  max-width: 40rem;
+}
+
+.chat__msg {
+  max-width: 85%;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-md);
+  line-height: 1.55;
+  font-size: 0.92rem;
+  border: 1px solid var(--border);
+}
+
+.chat__msg p {
+  white-space: pre-wrap;
+}
+
+.chat__msg--user {
+  align-self: flex-end;
+  background: var(--surface-2);
+}
+
+/* Blue edge like the other AI text: commentary, not the engine's recommendation. */
+.chat__msg--assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border-left: 3px solid var(--pos-wr);
+}
+
+.chat__msg--withheld {
+  border-left-color: var(--loss);
+  color: var(--text-muted);
+}
+
+.chat__msg--pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.chat__msg .ai__attr {
+  display: block;
+  margin-top: 0.35rem;
+}
+
+.chat__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.chat__input {
+  resize: vertical;
+  min-height: 3.2rem;
+  font: inherit;
+}
+
+.chat__actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Chips take the leftover width and wrap among themselves, so Ask stays on the right. */
+.chat__examples {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.ctx {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: 0.5rem;
+}
+
+.ctx summary {
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  font-weight: 600;
+}
+
+.ctx__body {
+  margin: 0;
+  padding: 0 0.85rem 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+/* ---------- leagues ---------- */
+
+.rail__league {
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.rail__select {
+  width: 100%;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.rail__league-name {
+  display: block;
+  padding: 0.3rem 0.6rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.rail__hint {
+  display: block;
+  padding: 0.3rem 0.6rem 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.league-row__actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* ---------- week switch ---------- */
+
+.weektoggle {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.1rem;
+}
+
+.weektoggle__opt {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.weektoggle__opt[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink, #111);
+  font-weight: 700;
+}
+
+.weektoggle__opt:disabled {
+  cursor: progress;
+}
+
+/* ---------- web news ---------- */
+
+.webnews {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--pos-wr);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.webnews__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.webnews__head > div {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.webnews__title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.webnews__meta,
+.webnews__result {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.webnews__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+
+.webnews__item {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.webnews__item--off {
+  opacity: 0.55;
+}
+
+.webnews__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.webnews__who {
+  font-weight: 600;
+}
+
+.webnews__status {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.webnews__status--out,
+.webnews__status--doubtful {
+  color: var(--loss);
+  border-color: var(--loss);
+}
+
+.webnews__toggle {
+  margin-left: auto;
+}
+
+.webnews__summary {
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.webnews__sources {
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.webnews__sources a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.webnews__rejected {
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.flag--news {
+  color: var(--pos-wr);
+}
+
+.choice__inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ---------- betting odds ---------- */
+
+.oddsbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.oddsbar__text {
+  flex: 1 1 24rem;
+  min-width: 0;
+}
+
+.flag--market {
+  color: var(--gain);
+}
+
+.flag--game {
+  color: var(--text-dim);
+}
+
+/* ---------- news section ---------- */
+
+.adjust-note {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.adjust-note a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.webnews__limits {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.newsfeed {
+  margin-top: 1.5rem;
+}
+
+.subhead {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
+.subhead__meta {
+  margin-left: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+/* The week switch is a form now; keep it inline in the scorebug. */
+form.weektoggle {
+  margin: 0;
+}
+
+/* What a web pick adds to your lineup this week. */
+.webnews__gain {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--gain);
+}
