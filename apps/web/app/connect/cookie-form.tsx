@@ -6,7 +6,7 @@ import { renewCookies, type ConnectResult } from './actions';
 
 /** Paste fresh ESPN cookies once; every league on that account picks them up. */
 export function CookieForm() {
-  const [result, submit, pending] = useFormAction<ConnectResult | null>(renewCookies, null);
+  const [result, submit, pending] = useFormAction<ConnectResult | null>(renewCookies, null, { refresh: true });
   const form = useRef<HTMLFormElement>(null);
 
   // Saved cookies are not left in the fields; rejected ones stay to be checked.

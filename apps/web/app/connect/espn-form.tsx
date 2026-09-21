@@ -9,7 +9,7 @@ import { connectEspn, type ConnectResult } from './actions';
  * does not show, or a league on a different ESPN account.
  */
 export function EspnForm({ hasCookies }: { hasCookies: boolean }) {
-  const [result, submit, pending] = useFormAction<ConnectResult | null>(connectEspn, null);
+  const [result, submit, pending] = useFormAction<ConnectResult | null>(connectEspn, null, { refresh: true });
   const form = useRef<HTMLFormElement>(null);
 
   // Clear the form once a league is added. After a failure everything typed

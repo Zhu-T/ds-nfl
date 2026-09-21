@@ -97,10 +97,20 @@ const byProjection = (a: LookupPlayer, b: LookupPlayer) => b.projected - a.proje
  * players at positions it asks about. Your own roster is left out; the brief
  * already has it.
  */
-export function lookUpPlayers<T extends LookupPlayer>(question: string, list: readonly T[]): T[] {
+export function lookUpPlayers<T extends LookupPlayer>(
+  question: string,
+  list: readonly T[],
+  /**
+   * `includeMine` also finds your own players by name (the brief already lists
+   * them, so chat lookups leave them out); `namesOnly` skips team rosters and
+   * position lists. Both are for working out a named move.
+   */
+  options: { readonly includeMine?: boolean; readonly namesOnly?: boolean } = {},
+): T[] {
   const text = ` ${words(question).join(' ')} `;
   const has = (phrase: string) => phrase !== '' && text.includes(` ${phrase} `);
   const others = list.filter((p) => p.ownerKind !== 'mine');
+  const nameable = options.includeMine ? list : others;
   const found: T[] = [];
   const add = (p: T) => {
     if (found.length < LOOKUP_LIMIT && !found.includes(p)) found.push(p);
@@ -109,8 +119,8 @@ export function lookUpPlayers<T extends LookupPlayer>(question: string, list: re
   // Players named: first by full name or a two-word surname ("St. Brown"), and
   // then, in what is left of the question, by surname or a first name only one
   // of them has. So "Amon-Ra St. Brown" does not also find every other Brown.
-  const keys = new Map(others.map((p) => [p, nameKeys(p)]));
-  const strong = new Set(others.filter((p) => {
+  const keys = new Map(nameable.map((p) => [p, nameKeys(p)]));
+  const strong = new Set(nameable.filter((p) => {
     const k = keys.get(p)!;
     return has(k.full) || (k.surname.includes(' ') && has(k.surname));
   }));
@@ -135,6 +145,8 @@ export function lookUpPlayers<T extends LookupPlayer>(question: string, list: re
   let leftover = rest;
   for (const w of usedWords) leftover = leftover.split(` ${w} `).join(' ');
   const inLeftover = (word: string) => leftover.includes(` ${word} `);
+
+  if (options.namesOnly) return found;
 
   // Positions asked about.
   const asked = new Set<string>();

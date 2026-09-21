@@ -46,6 +46,8 @@ import { adjustFor, gameFor, marketFor, type MarketContext, type OddsStatus } fr
 import { matchupInputs, matchupsFor, type MatchupContext, type MatchupStatus } from './matchups';
 import { openingsAmong } from './depth';
 import { formEnabled, formInputs } from './form';
+import { readWeekResults } from '@ds-nfl/adapters';
+import { recordCompletedWeeks, recordSnapshot, snapshotRow } from './results';
 
 export interface MatchupView {
   readonly opponentName: string;
@@ -106,6 +108,14 @@ export interface WeekView {
   readonly openings: Readonly<Record<string, OpenedRole>>;
   /** Whether a player's own scoring this season is shaping projections. */
   readonly form: { readonly enabled: boolean };
+  /** Last week as played, once recorded: your set lineup, the recommended one, and the best possible. */
+  readonly lastResult: {
+    readonly week: number;
+    readonly set: number;
+    readonly recommended: number;
+    readonly recommendedFrom: 'app' | 'espn';
+    readonly best: number;
+  } | null;
   /** Each player's game line, keyed by player id, when odds are on. */
   readonly games: Readonly<Record<string, GameLine>>;
 }
@@ -169,7 +179,7 @@ const planCached = cache(async (key: string, week: number | null): Promise<Lineu
   const [roster, { ctx: market, status: oddsStatus }, rawMatchup, { ctx: matchups, status: matchupStatus }] =
     await Promise.all([
       reader.getRoster(ref, target),
-      marketFor(league, target),
+      marketFor(league, target, reader, ref),
       reader.getMatchup(ref, target).catch(() => null),
       matchupsFor(reader, ref, league, target),
     ]);
@@ -203,6 +213,16 @@ const planCached = cache(async (key: string, week: number | null): Promise<Lineu
   const openings = openingsAmong([...(await reader.getAllRosters(ref, target)).values()].flat());
   const optimal = optimizeLineup(players, league.rosterSettings);
 
+  // What the app believed before kickoff, kept for training and checking; see results.ts.
+  const slotOf = new Map(optimal.starters.flatMap((s) => (s.player ? [[s.player.gsisId, String(s.slot)] as const] : [])));
+  const rosterById = new Map(roster.players.map((p) => [p.platformPlayerId, p]));
+  recordSnapshot(
+    planKey,
+    target,
+    'lineup',
+    players.map((p) => snapshotRow(p, rosterById.get(p.gsisId), 'mine', { slot: slotOf.get(p.gsisId) ?? 'BENCH' })),
+  );
+
   return {
     conn,
     key: planKey,
@@ -232,6 +252,9 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
   try {
     const plan = await planLineup(key, week);
     if (!plan) return sampleView(null);
+    // Finished weeks are recorded in the background; the page does not wait.
+    void recordCompletedWeeks(plan.reader, plan.ref, plan.league, plan.key);
+    const last = readWeekResults(plan.key, plan.league.currentWeek - 1);
     const { league, players, optimal, isFuture } = plan;
 
     const current = currentAssignments(players, plan.roster, league.rosterSettings);
@@ -289,6 +312,7 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
       matchups: plan.matchupStatus,
       openings: Object.fromEntries(plan.openings),
       form: { enabled: plan.formOn },
+      lastResult: last?.lineup ? { week: last.week, ...last.lineup } : null,
       games,
     };
   } catch (e) {
@@ -432,6 +456,7 @@ function sampleView(error: string | null): WeekView {
     matchups: { enabled: false, available: false, error: null },
     openings: {},
     form: { enabled: false },
+    lastResult: null,
     games: {},
   };
 }

@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit -p packages/core/tsconfig.json",
     "dev": "npm run dev --workspace=@ds-nfl/web",
     "build": "npm run build --workspace=@ds-nfl/web",
-    "start": "npm run start --workspace=@ds-nfl/web"
+    "start": "npm run start --workspace=@ds-nfl/web",
+    "export-results": "vite-node scripts/export-results.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

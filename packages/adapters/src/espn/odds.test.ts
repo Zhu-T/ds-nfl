@@ -34,6 +34,12 @@ describe('parseScoreboardOdds', () => {
     ]);
   });
 
+  it('keeps each game’s kickoff time for both teams', () => {
+    const [home, away] = parseScoreboardOdds({ events: [{ ...game('1', 'DET', 'BUF', -4.5, 53.5), date: '2026-09-21T00:15Z' }] });
+    expect([home!.kickoff, away!.kickoff]).toEqual(['2026-09-21T00:15Z', '2026-09-21T00:15Z']);
+    expect(parseScoreboardOdds({ events: [game('2', 'CAR', 'ATL', 1.5, 43.5)] })[0]!.kickoff).toBeNull();
+  });
+
   it('skips games without lines', () => {
     const noLine = { ...game('1', 'DET', 'BUF', 0, 0), competitions: [{ ...game('1', 'DET', 'BUF', 0, 0).competitions[0], odds: [] }] };
     expect(parseScoreboardOdds({ events: [noLine] })).toEqual([]);

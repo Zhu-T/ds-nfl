@@ -167,6 +167,8 @@ export default async function ConnectPage() {
           anthropicKeySet={ai.anthropicKeySet}
           ollamaUrl={ai.ollamaUrl}
           ollamaModel={ai.ollamaModel}
+          ollamaJudgmentModel={ai.ollamaJudgmentModel}
+          ollamaChatModel={ai.ollamaChatModel}
           ollamaSearchKeySet={ai.ollamaSearchKeySet}
           installedModels={ollama.models}
           ollamaReachable={ollama.reachable}

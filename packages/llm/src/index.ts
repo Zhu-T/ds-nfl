@@ -15,3 +15,4 @@ export * from './research.js';
 export { collectSources } from './claude.js';
 export * from './waiver-picks.js';
 export * from './lookup.js';
+export * from './what-if.js';

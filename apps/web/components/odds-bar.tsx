@@ -33,7 +33,7 @@ export function OddsBar({
         ? `No betting lines are posted for week ${week} yet. Projections are ESPN's alone.`
         : blended === 0
           ? `${provider ?? 'The sportsbook'} has not posted player prop lines for your players' week ${week} games yet; they usually fill in during the week. Projections are ESPN's alone until then. Team totals come from the game lines.`
-          : `Projections for ${blended} of ${players} players blend ESPN with ${provider ?? 'sportsbook'} player prop lines, half each: yards and receptions, rescored under your league's rules. Team totals come from the game lines.`;
+          : `Projections for ${blended} of ${players} players blend ESPN with ${provider ?? 'sportsbook'} player prop lines, half each: yards and receptions, rescored under your league's rules. Lines are first calibrated against ESPN, separately for games within 36 hours and later ones, so a player whose props came out first gains nothing from that alone. Team totals come from the game lines.`;
 
   return (
     <div className="oddsbar">

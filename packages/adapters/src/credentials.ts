@@ -44,6 +44,13 @@ export interface AiSettings {
   readonly anthropicApiKey?: string;
   readonly ollamaUrl?: string;
   readonly ollamaModel?: string;
+  /**
+   * Model for background judgement tasks: the news check, waiver picks, and the
+   * news read on Evaluate a player. Absent means the same model as everything else.
+   */
+  readonly ollamaJudgmentModel?: string;
+  /** Model for the League AI chat, e.g. one that reasons. Absent means the same model as everything else. */
+  readonly ollamaChatModel?: string;
   /** Key for Ollama's web search API (a free ollama.com account). Optional; adds a news source. */
   readonly ollamaApiKey?: string;
 }

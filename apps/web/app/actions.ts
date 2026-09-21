@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import type { LineupSlot } from '@ds-nfl/core';
 import { AdapterFailure, EspnWriter, describeError, type DesiredSlot } from '@ds-nfl/adapters';
 import { planLineup } from '@/lib/week';
@@ -54,7 +53,6 @@ export async function applyLineup(key: string, week: number): Promise<ApplyResul
       plan.reader.getSlotMap(r, w),
     );
     const result = await writer.setLineup(plan.ref, plan.week, changes);
-    revalidatePath('/', 'layout');
 
     const moved = result.moved.map((m) => `${m.name} → ${m.to}`).join(', ');
     return { ok: true, message: `Week ${plan.week} lineup set and confirmed on ESPN: ${moved}.` };

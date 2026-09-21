@@ -15,3 +15,4 @@ export * from './espn/market.js';
 export * from './espn/matchups.js';
 export * from './waiver-picks.js';
 export * from './player-lists.js';
+export * from './results.js';

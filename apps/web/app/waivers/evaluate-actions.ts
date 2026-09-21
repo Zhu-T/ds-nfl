@@ -57,7 +57,7 @@ export async function playerNewsReadAction(key: string, week: number, id: string
   if (!/^\d{1,12}$/.test(String(id))) return { ok: false, message: 'Evaluate a player first.' };
   let provider;
   try {
-    provider = currentProvider();
+    provider = currentProvider('judgment');
   } catch (error) {
     return { ok: false, message: messageOf(error) };
   }

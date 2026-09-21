@@ -307,6 +307,20 @@ describe('diffLineup', () => {
     expect(diffLineup(optimal.starters, optimal).slotsChanged).toBe(0);
   });
 
+  it('counts nothing when two starters of the same type are only listed in the other order', () => {
+    const rs2 = settings({ RB: 2 });
+    const first = player('First', 'RB', 20);
+    const second = player('Second', 'RB', 19);
+    const optimal = optimizeLineup([first, second], rs2);
+    const current: SlotAssignment[] = [
+      { slot: 'RB' as LineupSlot, slotIndex: 0, player: optimal.starters[1]!.player },
+      { slot: 'RB' as LineupSlot, slotIndex: 1, player: optimal.starters[0]!.player },
+    ];
+    const diff = diffLineup(current, optimal);
+    expect(diff.alreadyOptimal).toBe(true);
+    expect(diff.slotsChanged).toBe(0);
+  });
+
   it('counts each changed slot separately', () => {
     const rs2 = settings({ RB: 2 });
     const good1 = player('Good1', 'RB', 20);

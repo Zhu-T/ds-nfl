@@ -74,8 +74,13 @@ export class ClaudeProvider implements LlmProvider {
       .trim();
     if (!text) throw new LlmError('bad-response', 'Claude returned no text.');
 
+    // Adaptive thinking, when Claude shows it; kept for display, see LlmText.reasoning.
+    const reasoning = response.content
+      .flatMap((block) => (block.type === 'thinking' && block.thinking.trim() ? [block.thinking.trim()] : []))
+      .join('\n\n');
+
     // With a fallback in play, the model that answered may not be the one asked.
-    return { text, provider: 'claude', model: response.model };
+    return { text, provider: 'claude', model: response.model, ...(reasoning ? { reasoning } : {}) };
   }
 
   /**

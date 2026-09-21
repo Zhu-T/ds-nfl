@@ -10,6 +10,7 @@ import { MatchupBar } from '@/components/matchup-bar';
 import { FormBar } from '@/components/form-bar';
 import { formLabel } from '@/lib/form-label';
 import { matchupLabel } from '@/lib/matchup-label';
+import { marketLabel } from '@/lib/market-label';
 import { openedRoleNote } from '@ds-nfl/core';
 import type { GameLine } from '@/lib/week';
 import { aiStatus } from '@/lib/ai';
@@ -51,18 +52,13 @@ function newsLabel(p: OptimizerPlayer): string {
   return `news: ${p.news.status}, ${pts(p.news.from)} → ${pts(p.projectedPoints)}`;
 }
 
-/** "market 12.7 · ESPN 11.8" when betting lines changed the projection. */
-function marketLabel(p: OptimizerPlayer): string {
-  return p.market ? `market ${pts(p.market.blended)} · ESPN ${pts(p.market.espn)}` : '';
-}
-
 /** "LAR vs SF, team total 24.5" from the game lines. */
 function gameLabel(g: GameLine | undefined): string {
   return g ? `${g.team} ${g.home ? 'vs' : '@'} ${g.opponent}, team total ${pts(g.impliedPoints)}` : '';
 }
 
 export default async function LineupPage() {
-  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, games } =
+  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, lastResult, games } =
     await loadWeek();
   const ai = aiStatus();
   const everyone = [...optimal.starters.flatMap((s) => (s.player ? [s.player] : [])), ...optimal.bench];
@@ -206,6 +202,14 @@ export default async function LineupPage() {
         <p className="adjust-note">
           The news check changed {newsApplied.length === 1 ? 'one projection' : `${newsApplied.length} projections`}:{' '}
           {newsApplied.map((p) => p.name).join(', ')}. <a href="#news">Review</a>
+        </p>
+      )}
+
+      {!isSample && lastResult && (
+        <p className="adjust-note">
+          Week {lastResult.week} as played: your lineup scored {pts(lastResult.set)}; the{' '}
+          {lastResult.recommendedFrom === 'app' ? 'recommended lineup' : "best lineup by ESPN's projections"} would have
+          scored {pts(lastResult.recommended)}; the best possible was {pts(lastResult.best)}.
         </p>
       )}
 
@@ -382,7 +386,7 @@ export default async function LineupPage() {
             week={league.week}
             report={news}
             provider={ai.provider}
-            providerLabel={ai.label ?? ''}
+            providerLabel={ai.judgmentLabel ?? ''}
           />
           <Suspense fallback={<p className="field__hint" style={{ marginTop: '1.25rem' }}>Loading ESPN player updates…</p>}>
             <RosterNews leagueKey={leagueKey} />

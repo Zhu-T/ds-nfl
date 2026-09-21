@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { connectEspn, type ConnectResult } from './actions';
+import { useRefresh } from '@/lib/use-refresh';
 
 /** One-click add for a league found on the signed-in ESPN account. */
 export function DiscoveredLeague({
@@ -13,10 +14,12 @@ export function DiscoveredLeague({
   teamId: string;
   season: number;
 }) {
-  const [result, submit, pending] = useActionState<ConnectResult | null, FormData>(
-    connectEspn,
-    null,
-  );
+  const refresh = useRefresh();
+  const [result, submit, pending] = useActionState<ConnectResult | null, FormData>(async (previous, form) => {
+    const added = await connectEspn(previous, form);
+    if (added?.ok) refresh();
+    return added;
+  }, null);
 
   return (
     <form action={submit} className="league-row__actions">

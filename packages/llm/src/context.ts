@@ -25,6 +25,8 @@ export interface ContextWaiver {
   readonly projected: number;
   /** Points added to the best possible lineup. */
   readonly gain: number;
+  /** Points added across the coming weeks named by `LeagueContextInput.horizon`. */
+  readonly horizonGain?: number;
   readonly pickup?: 'free-agent' | 'waivers';
 }
 
@@ -37,6 +39,8 @@ export interface ContextAvailable {
   readonly pickup: 'free-agent' | 'waivers';
   /** Points added to the best possible lineup; 0 when they would not start. */
   readonly gain: number;
+  /** Points added across the coming weeks named by `LeagueContextInput.horizon`. */
+  readonly horizonGain?: number;
   /** Injury designation, or that waiver articles recommend them. */
   readonly note?: string;
 }
@@ -73,6 +77,8 @@ export interface LeagueContextInput {
   readonly waivers: readonly ContextWaiver[];
   /** Unrostered players the app loaded; the section is left out when absent. */
   readonly available?: readonly ContextAvailable[];
+  /** The coming weeks that `horizonGain` covers, e.g. "weeks 2–5". */
+  readonly horizon?: string;
   readonly trades: readonly ContextTrade[];
   readonly news: readonly ContextNews[];
   /** Title for the first section, e.g. "Week 2 (next week, not started)". */
@@ -101,8 +107,8 @@ export function leagueContext(input: LeagueContextInput): {
   const sections: ContextSection[] = [
     { title: input.weekLabel ?? 'This week', body: input.lineupFacts },
     { title: 'Your roster', body: rosterBody(input.roster) },
-    { title: 'Waiver wire', body: waiverBody(input.waivers) },
-    ...(input.available ? [{ title: 'Available players', body: availableBody(input.available) }] : []),
+    { title: 'Waiver wire', body: waiverBody(input.waivers, input.horizon) },
+    ...(input.available ? [{ title: 'Available players', body: availableBody(input.available, input.horizon) }] : []),
     { title: 'Trade ideas', body: tradeBody(input.trades) },
     { title: 'Recent news', body: newsBody(input.news) },
   ];
@@ -132,12 +138,17 @@ function rosterBody(players: readonly ContextRosterPlayer[]): string {
     .join('\n');
 }
 
-function waiverBody(waivers: readonly ContextWaiver[]): string {
+/** "adds 0.7" or, with a horizon, "adds 0.7 this week and 2.4 over weeks 2–5". */
+function adds(gain: number, later: number | undefined, horizon: string | undefined): string {
+  return later !== undefined && horizon ? `adds ${n(gain)} this week and ${n(later)} over ${horizon}` : `adds ${n(gain)}`;
+}
+
+function waiverBody(waivers: readonly ContextWaiver[], horizon?: string): string {
   if (waivers.length === 0) return 'No available player improves your best possible lineup.';
   return [
     // Without this the model reads "the lineup is already the best one available"
     // (this week, with started games locked) as "no pickup can help", which is wrong.
-    "Available players ranked by how many points they add to your best possible lineup, valued as if no game had kicked off: a pickup pays off in the weeks after it is made, separately from whether this week's lineup can still change.",
+    `Available players ranked by how many points they add to your best possible lineup, valued as if no game had kicked off: a pickup pays off in the weeks after it is made, separately from whether this week's lineup can still change.${horizon ? ` Where a second number is given, it is what they add across ${horizon}, from ESPN's rest-of-season projections with bye weeks.` : ''}`,
     ...waivers.map((w) => {
       const how =
         w.pickup === 'waivers'
@@ -145,7 +156,7 @@ function waiverBody(waivers: readonly ContextWaiver[]): string {
           : w.pickup === 'free-agent'
             ? '; free agent, can be added now'
             : '';
-      return `- ${w.name} (${w.position}): projected ${n(w.projected)}, adds ${n(w.gain)}${how}`;
+      return `- ${w.name} (${w.position}): projected ${n(w.projected)}, ${adds(w.gain, w.horizonGain, horizon)}${how}`;
     }),
   ].join('\n');
 }
@@ -154,7 +165,7 @@ function waiverBody(waivers: readonly ContextWaiver[]): string {
 const AVAILABLE_PER_POSITION: Record<string, number> = { QB: 5, RB: 8, WR: 8, TE: 5, K: 3, DST: 3 };
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'];
 
-function availableBody(players: readonly ContextAvailable[]): string {
+function availableBody(players: readonly ContextAvailable[], horizon?: string): string {
   if (players.length === 0) return 'No unrostered players were loaded.';
   const byPosition = new Map<string, ContextAvailable[]>();
   for (const p of players) byPosition.set(p.position, [...(byPosition.get(p.position) ?? []), p]);
@@ -172,7 +183,7 @@ function availableBody(players: readonly ContextAvailable[]): string {
           const team = p.proTeam ? `, ${p.proTeam}` : '';
           const how = p.pickup === 'waivers' ? 'needs a waiver claim' : 'free agent, can be added now';
           const note = p.note ? `; ${p.note}` : '';
-          return `- ${p.name} (${p.position}${team}): projected ${n(p.projected)}, adds ${n(p.gain)}; ${how}${note}`;
+          return `- ${p.name} (${p.position}${team}): projected ${n(p.projected)}, ${adds(p.gain, p.horizonGain, horizon)}; ${how}${note}`;
         }),
     );
   return [

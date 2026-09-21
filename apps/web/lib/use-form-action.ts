@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useCallback, useTransition, type FormEvent } from 'react';
+import { useRefresh } from './use-refresh';
 
 /**
  * A server action for a form, without React's automatic form reset.
@@ -14,13 +15,27 @@ import { useActionState, useCallback, useTransition, type FormEvent } from 'reac
  *
  * Built-in validation (`required` and so on) still runs first, because the
  * submit event only fires once it passes.
+ *
+ * With `refresh`, the page's server data is reloaded once the action finishes,
+ * for forms whose action changes what the page shows (see `useRefresh`).
  */
 export function useFormAction<S>(
   action: (previous: S, form: FormData) => Promise<S>,
   initial: S,
+  options: { readonly refresh?: boolean } = {},
 ): readonly [S, (event: FormEvent<HTMLFormElement>) => void, boolean] {
+  const refresh = useRefresh();
+  const reloads = options.refresh === true;
+  const run = useCallback(
+    async (previous: S, form: FormData) => {
+      const next = await action(previous, form);
+      if (reloads) refresh();
+      return next;
+    },
+    [action, reloads, refresh],
+  );
   const [state, dispatch, pending] = useActionState<S, FormData>(
-    action as (previous: Awaited<S>, form: FormData) => Promise<S>,
+    run as (previous: Awaited<S>, form: FormData) => Promise<S>,
     initial as Awaited<S>,
   );
   const [, startTransition] = useTransition();

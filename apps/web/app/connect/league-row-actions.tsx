@@ -1,6 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
+import { useRefresh } from '@/lib/use-refresh';
 import { switchLeague } from '../league-actions';
 import { forgetLeague } from './actions';
 
@@ -14,6 +15,7 @@ export function LeagueRowActions({
   active: boolean;
 }) {
   const [pending, start] = useTransition();
+  const refresh = useRefresh();
 
   return (
     <div className="league-row__actions">
@@ -22,7 +24,12 @@ export function LeagueRowActions({
           className="btn btn--ghost"
           type="button"
           disabled={pending}
-          onClick={() => start(() => switchLeague(leagueKey))}
+          onClick={() =>
+            start(async () => {
+              await switchLeague(leagueKey);
+              refresh();
+            })
+          }
         >
           Make active
         </button>
@@ -35,7 +42,11 @@ export function LeagueRowActions({
           const ok = window.confirm(
             `Remove ${leagueName}? Its saved cookies are deleted from this computer. Its AI conversation is kept, and you can add the league again at any time.`,
           );
-          if (ok) start(() => forgetLeague(leagueKey));
+          if (ok)
+            start(async () => {
+              await forgetLeague(leagueKey);
+              refresh();
+            });
         }}
       >
         Remove

@@ -44,6 +44,11 @@ export interface LlmText {
   readonly provider: ProviderId;
   /** The model that actually produced the text, for attribution in the UI. */
   readonly model: string;
+  /**
+   * The model's reasoning, when it shows any. For display only: it is never
+   * checked by the number guard, quoted as fact, or sent back to the model.
+   */
+  readonly reasoning?: string;
 }
 
 /** A page a web search returned. */

@@ -29,6 +29,8 @@ export function AiForm({
   anthropicKeySet,
   ollamaUrl,
   ollamaModel,
+  ollamaJudgmentModel,
+  ollamaChatModel,
   ollamaSearchKeySet,
   installedModels,
   ollamaReachable,
@@ -37,6 +39,10 @@ export function AiForm({
   anthropicKeySet: boolean;
   ollamaUrl: string;
   ollamaModel: string;
+  /** Null when judgement tasks use the same model. */
+  ollamaJudgmentModel: string | null;
+  /** Null when the chat uses the same model. */
+  ollamaChatModel: string | null;
   ollamaSearchKeySet: boolean;
   installedModels: readonly string[];
   ollamaReachable: boolean;
@@ -44,7 +50,7 @@ export function AiForm({
   const [choice, setChoice] = useState<Provider>(provider);
   // Not a plain form action: React would reset the radios to the provider the
   // page first rendered with, so a saved choice would appear to revert to Off.
-  const [result, submit, pending] = useFormAction<ConnectResult | null>(saveAiSettings, null);
+  const [result, submit, pending] = useFormAction<ConnectResult | null>(saveAiSettings, null, { refresh: true });
   const keyInput = useRef<HTMLInputElement>(null);
   const searchKeyInput = useRef<HTMLInputElement>(null);
   const removeSearchKey = useRef<HTMLInputElement>(null);
@@ -136,6 +142,52 @@ export function AiForm({
               </span>
             </label>
           </div>
+
+          <label className="field">
+            <span className="field__label">Model for the news check and waiver picks</span>
+            {installedModels.length > 0 ? (
+              <select className="field__input" name="ollamaJudgmentModel" defaultValue={ollamaJudgmentModel ?? ''}>
+                <option value="">Same as above</option>
+                {installedModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className="field__input"
+                name="ollamaJudgmentModel"
+                defaultValue={ollamaJudgmentModel ?? ''}
+                placeholder="Same as above"
+              />
+            )}
+            <span className="field__hint">
+              The news check, waiver picks, and the news read on Evaluate a player run in the background
+              and can move projections, so a slower model that reasons costs less waiting there. Chat and
+              explanations stay on the model above, for speed.
+            </span>
+          </label>
+
+          <label className="field">
+            <span className="field__label">Model for the League AI chat</span>
+            {installedModels.length > 0 ? (
+              <select className="field__input" name="ollamaChatModel" defaultValue={ollamaChatModel ?? ''}>
+                <option value="">Same as above</option>
+                {installedModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input className="field__input" name="ollamaChatModel" defaultValue={ollamaChatModel ?? ''} placeholder="Same as above" />
+            )}
+            <span className="field__hint">
+              A model that reasons, such as deepseek-r1:14b, can talk through pickups and trades, and shows its
+              reasoning under each answer. It is slower than one fine-tuned to answer straight from the facts.
+            </span>
+          </label>
 
           <div className="field">
             <label className="field__label" htmlFor="ollamaApiKey">

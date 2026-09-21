@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import {
   appendToConversation,
   clearConversation,
@@ -19,6 +18,7 @@ import {
 } from '@ds-nfl/llm';
 import { currentProvider } from '@/lib/ai';
 import { buildLeagueContext } from '@/lib/league-context';
+import { whatIfsFor } from '@/lib/what-if';
 
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
@@ -57,7 +57,7 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
 
   let provider;
   try {
-    provider = currentProvider();
+    provider = currentProvider('chat');
   } catch (error) {
     return { messages: prev.messages, error: messageOf(error) };
   }
@@ -83,7 +83,11 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
   const lastQuestion = [...past].reverse().find((m) => m.role === 'user')?.content;
   let found = list ? lookUpPlayers(question, list.players) : [];
   if (found.length === 0 && list && lastQuestion) found = lookUpPlayers(lastQuestion, list.players);
-  const block = list ? lookupBlock(found, stamp(list.updatedAt)) : '';
+  const looked = list ? lookupBlock(found, stamp(list.updatedAt)) : '';
+  // Adding, dropping, or trading the players it names, worked out with the app's own math.
+  const worked = await whatIfsFor(key, ctx.view.week, question, list).catch(() => ({ block: '', names: [] as string[] }));
+  const block = [looked, worked.block].filter(Boolean).join('\n\n');
+  const covered = [...new Set([...found.map((p) => p.name), ...worked.names])];
 
   const allowed = [
     ctx.view.text,
@@ -96,7 +100,7 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
     role: 'user',
     content: question,
     at: new Date().toISOString(),
-    ...(block ? { lookedUp: found.map((p) => p.name), lookup: block } : {}),
+    ...(block ? { lookedUp: covered, lookup: block } : {}),
   };
   let invented: readonly number[] = [];
   let author = '';
@@ -119,7 +123,13 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
 
     const guard = checkNumbers(text, allowed);
     if (guard.ok) {
-      const reply: ChatMessage = { role: 'assistant', content: text, at: new Date().toISOString(), author };
+      const reply: ChatMessage = {
+        role: 'assistant',
+        content: text,
+        at: new Date().toISOString(),
+        author,
+        ...(out.reasoning ? { reasoning: out.reasoning.slice(0, 12_000) } : {}),
+      };
       return { messages: appendToConversation(key, [asked, reply]) };
     }
     invented = guard.invented;
@@ -139,7 +149,6 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
 export async function refreshPlayerList(form: FormData): Promise<void> {
   const key = String(form.get('league') ?? '');
   if (key) clearPlayerLists(key);
-  revalidatePath('/ai');
 }
 
 /** "Sep 15, 10:40 AM". */

@@ -81,3 +81,14 @@ describe('lookUpPlayers', () => {
     expect(withLookup('Who?', 'ROWS')).toBe('ROWS\n\nQuestion: Who?');
   });
 });
+
+describe('lookUpPlayers for a named move', () => {
+  it('can include your own players and skip rosters and position lists', () => {
+    const q = 'should I trade Stafford for Bijan? any running backs worth it';
+    expect(lookUpPlayers(q, list).map((x) => x.name)).not.toContain('Matthew Stafford');
+    expect(lookUpPlayers(q, list, { includeMine: true, namesOnly: true }).map((x) => x.name)).toEqual([
+      'Bijan Robinson',
+      'Matthew Stafford',
+    ]);
+  });
+});

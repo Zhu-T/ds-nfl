@@ -11,7 +11,12 @@ import {
   applyForm,
   applyMatchups,
   applyNewsFindings,
+  dropCosts,
+  horizonValues,
+  swapValue,
   openedRoleNote,
+  type DropSuggestion,
+  type HorizonValue,
   type NewsFinding,
   type OpenedRole,
   optimizeLineup,
@@ -46,6 +51,8 @@ import { adjustFor, gameFor, marketFor, type MarketContext } from './market';
 import { searchWords } from './player-search';
 import { matchupInputs, matchupsFor, type MatchupContext } from './matchups';
 import { openingsAmong } from './depth';
+import { horizonFor } from './horizon';
+import { recordSnapshot, snapshotRow } from './results';
 import { formEnabled, formInputs } from './form';
 
 export type Loaded<T> =
@@ -137,7 +144,7 @@ async function weekFor(
 ) {
   const week = await resolveWeek(league, requested);
   const [market, matchups, formOn] = await Promise.all([
-    marketFor(league, week),
+    marketFor(league, week, reader, ref),
     matchupsFor(reader, ref, league, week),
     formEnabled(),
   ]);
@@ -171,6 +178,12 @@ export interface WaiverView {
   readonly available: readonly AvailablePlayer[];
   /** Players next in line behind an injured teammate their NFL team leans on, across the league, by id. */
   readonly openings: Readonly<Record<string, OpenedRole>>;
+  /** The weeks "across the coming weeks" covers, the week shown first. */
+  readonly horizonWeeks: readonly number[];
+  /** What each candidate adds to your best lineups across those weeks, by id. */
+  readonly horizonById: Readonly<Record<string, HorizonValue>>;
+  /** For candidates worth adding: the player whose absence costs your lineups least across those weeks, by candidate id. */
+  readonly dropById: Readonly<Record<string, DropSuggestion>>;
 }
 
 export interface AvailablePlayer {
@@ -186,6 +199,8 @@ export interface AvailablePlayer {
   readonly webPick: boolean;
   /** An injured teammate ahead of them, e.g. "Bijan Robinson, ahead of them at RB, is out". */
   readonly opening: string | null;
+  /** What they add to your best lineups across the coming weeks. */
+  readonly horizonGain: number;
 }
 
 export function loadWaivers(key?: string | null, requestedWeek?: number | null): Promise<Loaded<WaiverView>> {
@@ -211,6 +226,41 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     const mine = applyNewsFindings(priced(roster.players, market, matchups, formOn), findings);
     const pool = applyNewsFindings(priced(available, market, matchups, formOn), findings);
     const ranked = rankWaiverCandidates(mine, pool, league.rosterSettings);
+
+    // Beyond this week: each candidate's value across the coming weeks, and who you would miss least.
+    const horizon = await horizonFor(reader, ref, league, week, [...roster.players, ...available]);
+    const horizonById = horizonValues(mine, pool, horizon, league.rosterSettings);
+    const reach = (c: WaiverCandidate) => horizonById.get(c.player.gsisId)?.total ?? 0;
+    const candidates = [
+      ...new Set([
+        ...ranked.slice(0, 40),
+        ...[...ranked].sort((a, b) => reach(b) - reach(a) || b.lineupGain - a.lineupGain).slice(0, 40),
+      ]),
+    ];
+    const droppable = new Set(roster.players.filter((p) => p.currentSlot !== 'IR').map((p) => p.platformPlayerId));
+    const dropById: Record<string, DropSuggestion> = {};
+    for (const c of candidates.filter((x) => x.lineupGain > 0 || reach(x) > 0).slice(0, 30)) {
+      const [least] = dropCosts([...mine, c.player], horizon, league.rosterSettings, droppable);
+      if (least) dropById[c.player.gsisId] = least;
+    }
+
+    // The pickups as the app priced them before kickoff, kept for training and checking; see results.ts.
+    const availableById = new Map(available.map((p) => [p.platformPlayerId, p]));
+    const rankedById = new Map(ranked.map((c) => [c.player.gsisId, c]));
+    recordSnapshot(
+      connKey,
+      week,
+      'waivers',
+      pool.map((p) => {
+        const rp = availableById.get(p.gsisId);
+        const c = rankedById.get(p.gsisId);
+        const later = horizonById.get(p.gsisId);
+        return snapshotRow(p, rp, rp?.pickup ?? 'free-agent', {
+          ...(c ? { gain: c.lineupGain } : {}),
+          ...(later ? { horizonGain: later.total } : {}),
+        });
+      }),
+    );
     const pickupById: Record<string, 'free-agent' | 'waivers'> = {};
     const proTeamById: Record<string, string | null> = {};
     for (const p of available) {
@@ -223,7 +273,7 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
       isFuture,
       // If every slot is frozen, nobody can help this week regardless of value.
       lockedOut: !isFuture && roster.players.length > 0 && roster.players.every((p) => p.locked),
-      candidates: ranked.slice(0, 40),
+      candidates,
       considered: available.length,
       pickupById,
       proTeamById,
@@ -231,8 +281,11 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
       pickGains: Object.fromEntries(
         ranked.filter((c) => webPicks?.picks.some((p) => p.playerId === c.player.gsisId)).map((c) => [c.player.gsisId, c.lineupGain]),
       ),
-      available: availablePlayers(available, ranked, webPicks, openings),
+      available: availablePlayers(available, ranked, webPicks, openings, horizonById),
       openings: Object.fromEntries(openings),
+      horizonWeeks: horizon.weeks,
+      horizonById: Object.fromEntries(horizonById),
+      dropById,
     };
   });
 }
@@ -243,6 +296,7 @@ function availablePlayers(
   ranked: readonly WaiverCandidate[],
   webPicks: WebPicksReport | null,
   openings: ReadonlyMap<string, OpenedRole>,
+  horizonById: ReadonlyMap<string, HorizonValue>,
 ): AvailablePlayer[] {
   const rankedById = new Map(ranked.map((c) => [c.player.gsisId, c]));
   const picked = new Set((webPicks?.picks ?? []).flatMap((p) => (p.playerId ? [p.playerId] : [])));
@@ -262,6 +316,7 @@ function availablePlayers(
           injury: p.unavailableReason ?? null,
           webPick: picked.has(p.platformPlayerId),
           opening: openings.has(p.platformPlayerId) ? openedRoleNote(openings.get(p.platformPlayerId)!, p.position) : null,
+          horizonGain: horizonById.get(p.platformPlayerId)?.total ?? 0,
         },
       ];
     })
@@ -360,7 +415,6 @@ export interface PlayerEvaluation {
   readonly projection: number;
   readonly market: { readonly blended: number } | null;
   readonly news: { readonly status: string; readonly summary: string } | null;
-  /** The NFL opponent's defense and how it moved the projection; null when matchups are off or unknown. */
   /** What they have actually scored this season, and how it moved the projection. */
   readonly form: {
     readonly average: number;
@@ -368,6 +422,7 @@ export interface PlayerEvaluation {
     readonly factor: number;
     readonly pricedByMarket: boolean;
   } | null;
+  /** The NFL opponent's defense and how it moved the projection; null when matchups are off or unknown. */
   readonly matchup: {
     readonly opponent: string;
     readonly home: boolean;
@@ -387,6 +442,16 @@ export interface PlayerEvaluation {
     readonly spread: number;
   } | null;
   readonly value: PlayerValue;
+  /**
+   * This week and the next few: what they add to your best lineups, or for one
+   * of yours what losing them costs, and who to drop for them.
+   */
+  readonly horizon: {
+    readonly weeks: readonly number[];
+    readonly total: number;
+    readonly byWeek: readonly number[];
+    readonly drop: DropSuggestion | null;
+  };
   /** For another team's player: the one-for-one trade that helps both lineups most, if any does. */
   readonly trade: { readonly give: string; readonly myGain: number; readonly theirGain: number } | null;
 }
@@ -474,6 +539,21 @@ export function evaluatePlayer(
     const opening = openingsAmong([...[...all.values()].flat(), found]).get(found.platformPlayerId);
     const where = whereIs(found);
 
+    // Beyond this week, as the waiver list values it.
+    const myRoster = all.get(myId) ?? [];
+    const horizon = await horizonFor(reader, ref, league, week, [...myRoster, found]);
+    const onRoster = myRoster.some((p) => p.platformPlayerId === found.platformPlayerId);
+    let later: PlayerEvaluation['horizon'];
+    if (onRoster) {
+      const [cost] = dropCosts(mine, horizon, settings, new Set([found.platformPlayerId]));
+      later = { weeks: horizon.weeks, total: cost?.total ?? 0, byWeek: cost?.byWeek ?? [], drop: null };
+    } else {
+      const value = horizonValues(mine, [target!], horizon, settings).get(found.platformPlayerId);
+      const droppable = new Set(myRoster.filter((p) => p.currentSlot !== 'IR').map((p) => p.platformPlayerId));
+      const [least] = dropCosts([...mine, target!], horizon, settings, droppable);
+      later = { weeks: horizon.weeks, total: value?.total ?? 0, byWeek: value?.byWeek ?? [], drop: least ?? null };
+    }
+
     // For another team's player, the trade the Trades page would propose for them.
     let trade: PlayerEvaluation['trade'] = null;
     const theirId = teamOf.get(found.platformPlayerId) ?? found.onTeamId;
@@ -533,6 +613,7 @@ export function evaluatePlayer(
           ? { opponent: game.opponent, home: game.home, impliedPoints: game.impliedPoints, spread: game.spread }
           : null,
         value: valueToRoster(mine, target!, settings),
+        horizon: later,
         trade,
       },
     };
@@ -645,6 +726,51 @@ export function playerWebNews(
       })),
       sourcesUsed: gathered.sourcesUsed,
       warnings: gathered.warnings,
+    };
+  });
+}
+
+/** One named one-for-one trade: what it does to your best lineup this week and ahead, and to theirs this week. */
+export interface TradeWhatIf {
+  readonly give: string;
+  readonly get: string;
+  readonly owner: string;
+  readonly weeks: readonly number[];
+  readonly mine: HorizonValue;
+  readonly theirs: number;
+}
+
+/**
+ * Trading `giveId` (yours) for `getId` (another team's), priced as the Trades
+ * page prices it. Null when the players are not where the trade needs them.
+ */
+export function tradeWhatIf(
+  key: string | null | undefined,
+  requestedWeek: number | null,
+  giveId: string,
+  getId: string,
+): Promise<Loaded<TradeWhatIf | null>> {
+  return load(key, async (reader, ref, league, connKey) => {
+    const { week, findings, market, matchups, formOn } = await weekFor(reader, ref, league, connKey, requestedWeek);
+    const [teams, all] = await Promise.all([reader.getTeams(ref), reader.getAllRosters(ref, week)]);
+    const myId = String(ref.teamId);
+    const mineRoster = all.get(myId) ?? [];
+    const theirEntry = [...all].find(([teamId, ps]) => String(teamId) !== myId && ps.some((p) => p.platformPlayerId === getId));
+    if (!theirEntry || !mineRoster.some((p) => p.platformPlayerId === giveId)) return null;
+    const [theirId, theirRoster] = theirEntry;
+    const mine = applyNewsFindings(priced(mineRoster, market, matchups, formOn), findings);
+    const theirs = priced(theirRoster, market, matchups, formOn);
+    const give = mine.find((p) => p.gsisId === giveId)!;
+    const get = theirs.find((p) => p.gsisId === getId)!;
+    const horizon = await horizonFor(reader, ref, league, week, [...mineRoster, ...theirRoster]);
+    const settings = league.rosterSettings;
+    return {
+      give: give.name,
+      get: get.name,
+      owner: teams.find((t) => String(t.teamId) === String(theirId))?.name ?? `Team ${theirId}`,
+      weeks: horizon.weeks,
+      mine: swapValue(mine, giveId, get, horizon, settings),
+      theirs: swapValue(theirs, getId, give, { weeks: [week], outlooks: horizon.outlooks }, settings).total,
     };
   });
 }

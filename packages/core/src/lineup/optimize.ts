@@ -206,14 +206,10 @@ export function diffLineup(
     if (from) moves.push({ player: p, from, to: 'BENCH' });
   }
 
-  // Count slots whose occupant actually differs, matched by slot index so the
-  // two RB slots are compared against their counterparts rather than each other.
-  const currentBySlotIndex = new Map(current.map((a) => [a.slotIndex, a.player?.gsisId ?? null]));
-  let slotsChanged = 0;
-  for (const a of optimal.starters) {
-    const before = currentBySlotIndex.get(a.slotIndex) ?? null;
-    if (before !== (a.player?.gsisId ?? null)) slotsChanged++;
-  }
+  // A change is a starter moving into a slot of a different type. Comparing slot
+  // by slot counted two running backs listed in the other order as 2 changes,
+  // so the nav badge showed "2" beside a lineup the page called optimal.
+  const slotsChanged = moves.filter((m) => m.to !== 'BENCH').length;
 
   const currentPoints = current.reduce((s, a) => s + (a.player?.projectedPoints ?? 0), 0);
   return {

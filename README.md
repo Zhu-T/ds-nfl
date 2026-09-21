@@ -35,6 +35,12 @@ Produces `apps/desktop/dist/ds-nfl Setup <version>.exe` — about 90 MB installe
 from a 317 MB unpacked tree. `npm run start --workspace=@ds-nfl/desktop` runs the
 packaged shell without building an installer.
 
+GitHub Actions (`.github/workflows/build.yml`) runs on every push to `main`. It
+typechecks all four workspaces, runs the tests and builds the installer, which it attaches
+to the run as the `ds-nfl-installer` artifact for 14 days. The installer is unsigned, like
+a local build. CI has no league credentials, so the live ESPN tests skip themselves there.
+It can also be started by hand from the Actions tab.
+
 Electron is used rather than a bundled Node runtime because its Chromium is the
 same browser needed to capture an ESPN sign-in. Driving that with Playwright
 instead would add a ~433 MB browser download on top of the runtime — roughly
@@ -110,6 +116,18 @@ value.
 
 - The players considered are the 150 best projected for that week plus the 50 most
   rostered.
+- **This week or through week N.** A switch ranks by this week's gain or by the running
+  total from this week through the three after it ("Through week 5" in week 2). Later weeks use ESPN's rest-of-season projection
+  per game and each NFL team's bye weeks, so a player who would sit now but covers a bye or
+  out-projects your flex from here on still shows. Both numbers are on every row.
+- **Suggested drops** are the players your lineups would miss least across those weeks,
+  not simply the lowest projection. Costs within half a point count as a tie, broken by the
+  position with the most spare players for each one it starts, so a third quarterback in a
+  one-quarterback lineup goes before a fifth receiver, who is injury cover for several
+  slots. IR-slot players are never suggested.
+- Rest-of-season projections are ESPN's and conservative: few waiver players gain much on
+  them. Breakout potential shows up sooner in the injured-starter flags, recent form, and
+  web picks.
 - Ownership alone used to miss low-owned players with a real role that week. In week 3 it
   missed a 15-point QB, seven kickers, and a defense, while players projected for nothing
   took up slots.
@@ -164,6 +182,14 @@ ESPN's with the betting market, using DraftKings lines from ESPN's public odds e
   the blended numbers.
 - Sportsbooks post player props through the week. Early on, many players have none, and
   the page says so rather than blending anything.
+- **Lines are calibrated before they are blended.** Props come out game by game and move
+  as kickoff nears, so at any moment some players are priced by the market and the rest by
+  ESPN alone. If lines as a whole sit above or below ESPN, the players whose props are out
+  would gain or lose for that alone. So each line is divided by the week's typical
+  line-to-ESPN ratio for its stat, measured separately for games within 36 hours of kickoff
+  and later ones, over every player with props (not just the page's). A measured ratio is
+  pulled toward no correction until a dozen lines back it. On week 2's Monday game,
+  yardage lines sat 7-9% below ESPN and reception lines 5% above.
 
 **Recent form.** On by default, with its own switch on the lineup page. A projection is an
 average expectation and is slow to follow a player whose role or play has changed, so each
@@ -247,6 +273,27 @@ removing findings saves at once and does not run the check again. A check only r
 when clicked. With Claude it is billed to your Anthropic account (web searches plus tokens).
 With the local model it is free, and takes a few minutes.
 
+### Weekly results
+
+The app records every week, so it can be checked against what happened and the data can
+be used for model training. The files are kept in `data/results/`, beside the credential
+store; the desktop app keeps them under `%APPDATA%\ds-nfl`.
+
+- **Before kickoff:** the Lineup and Waivers pages save a snapshot of each player they
+  price. It holds ESPN's projection, the app's projection, the betting-line blend, the
+  matchup and form factors, the news finding, and the recommended slot or pickup gain.
+  A player's entry stops changing once their game locks.
+- **After the week:** on the next page load after the week ends, the app reads every
+  rostered player's actual points and the lineup you set. It joins them to the snapshot,
+  the news findings and the web waiver picks. Weeks from before recording began get
+  ESPN's projections only.
+- **On the Lineup page:** a line shows last week as played. It compares your lineup's
+  score with what the recommended lineup would have scored and with the best possible.
+
+`npm run export-results` writes `player-weeks.jsonl` (one row per player per week) and
+`lineup-weeks.jsonl` into the results folder. To export the desktop app's data, pass its
+folder: `npm run export-results -- "%APPDATA%\ds-nfl"`.
+
 ## AI explanations (optional)
 
 Off by default, and optional in the strongest sense: with it off, every number and
@@ -289,6 +336,16 @@ One page per connected league (**League AI** in the sidebar) with two parts:
   the 10 best unrostered tight ends. A follow-up that names no one reuses the rows the
   question before it named. The model never searches the list itself; the chat shows what
   was looked up under each question.
+- **Moves worked out for you.** When a question asks about adding, dropping, or trading
+  players it names ("should I drop Bo Nix to add KC Concepcion?", "should I trade Kenny
+  Gainwell for Chase Brown?"), the app computes each move with the Waivers page's math:
+  what it adds this week and through the coming weeks, the player your lineups would miss
+  least, and for a named trade, what it does to both teams. The model reasons from those
+  rows rather than adding up lineups, and the number check accepts their figures.
+- **Reasoning.** A separate model can be chosen for the chat under the Ollama settings,
+  such as deepseek-r1:14b, which reasons; its reasoning is shown under each answer on
+  request. It is for questioning the answer, and is not checked: only the answer goes
+  through the number check.
 - **A chat** scoped to that league. Earlier turns go back with each question, and the
   conversation is saved on this computer, one file per league: `data/conversations/` in
   development, and a `conversations` folder beside the desktop app's credentials.
@@ -313,7 +370,7 @@ after the lineup, so a slow feed never delays it.
 
 | Source | Auth | Provides |
 | --- | --- | --- |
-| ESPN `kona_player_info` | none | ADP, auction values, eligible slots, actual and projected stat lines |
+| ESPN `kona_player_info` | none | ADP, auction values, eligible slots, actual and projected stat lines, weekly actual points |
 | ESPN league views | `espn_s2` + `SWID` | Your roster, scoring settings, draft detail, transactions |
 | ESPN fantasy news feed | none | Player blurbs for your roster, last 7 days |
 | Google News search RSS | none | Headlines naming a player, last 7 days (news check) |

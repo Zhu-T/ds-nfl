@@ -980,6 +980,31 @@ body {
   gap: 0.2rem;
 }
 
+/* ---------- waiver ranking ---------- */
+
+.sortbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.chip--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.slot__alt {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
 /* ---------- ownership ---------- */
 
 .owner {
@@ -1002,6 +1027,21 @@ body {
 }
 
 /* ---------- AI layer ---------- */
+
+.chat__reasoning {
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.chat__reasoning summary {
+  cursor: pointer;
+}
+
+.chat__reasoning p {
+  white-space: pre-wrap;
+  margin: 0.35rem 0 0;
+}
 
 .ai__list {
   display: flex;

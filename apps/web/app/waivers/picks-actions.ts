@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import {
   clearWebPicks,
   gatherWaiverArticles,
@@ -40,7 +39,7 @@ export interface PicksResult {
 export async function checkWaiverPicks(key: string, week: number): Promise<PicksResult> {
   let provider;
   try {
-    provider = currentProvider();
+    provider = currentProvider('judgment');
   } catch (error) {
     return fail(error);
   }
@@ -155,7 +154,6 @@ export async function checkWaiverPicks(key: string, week: number): Promise<Picks
     picks,
     rejected: parsed.rejected,
   });
-  revalidatePath('/waivers');
 
   const available = picks.filter((p) => p.status === 'free-agent' || p.status === 'waivers').length;
   const rostered = picks.filter((p) => p.status === 'rostered').length;
@@ -172,7 +170,6 @@ export async function checkWaiverPicks(key: string, week: number): Promise<Picks
 export async function clearWaiverPicks(key: string, week: number): Promise<void> {
   const plan = await planLineup(key, week).catch(() => null);
   if (plan) clearWebPicks(plan.key, plan.week);
-  revalidatePath('/waivers');
 }
 
 function fail(error: unknown): PicksResult {

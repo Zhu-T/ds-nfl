@@ -5,6 +5,7 @@ export * from './scoring/rules.js';
 export * from './lineup/hungarian.js';
 export * from './lineup/optimize.js';
 export * from './waiver/evaluate.js';
+export * from './waiver/horizon.js';
 export * from './news/adjust.js';
 export * from './news/depth.js';
 export * from './weeks.js';

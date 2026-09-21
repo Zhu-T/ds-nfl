@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useState, useTransition } from 'react';
+import { useRefresh } from '@/lib/use-refresh';
 import type { NewsReport } from '@ds-nfl/adapters';
 import { checkWebNews, clearWebNews, toggleFinding, type NewsCheckResult } from '@/app/news-actions';
 
@@ -55,11 +56,13 @@ export function WebNewsPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<NewsCheckResult | null>(null);
   const pending = checking || saving;
+  const refresh = useRefresh();
   const save = (what: string, action: () => Promise<void>) => {
     setBusy(what);
     startSave(async () => {
       await action();
       setBusy(null);
+      refresh();
     });
   };
   const local = provider === 'ollama';
@@ -90,7 +93,10 @@ export function WebNewsPanel({
               startCheck(async () => {
                 const answer = await checkWebNews(leagueKey, week);
                 // Inside the transition, so the message and the refreshed findings appear together.
-                startCheck(() => setResult(answer));
+                startCheck(() => {
+                  setResult(answer);
+                  refresh();
+                });
               })
             }
           >

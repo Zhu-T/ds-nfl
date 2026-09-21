@@ -2,7 +2,6 @@
 
 import { openedRoleNote } from '@ds-nfl/core';
 import { formSentence } from '@/lib/form-label';
-import { revalidatePath } from 'next/cache';
 import { clearNewsReport, gatherPlayerNews, setFindingEnabled, writeNewsReport } from '@ds-nfl/adapters';
 import {
   LlmError,
@@ -43,7 +42,7 @@ const WINDOW_MS = NEWS_DAYS * 86_400_000;
 export async function checkWebNews(key: string, week: number): Promise<NewsCheckResult> {
   let provider;
   try {
-    provider = currentProvider();
+    provider = currentProvider('judgment');
   } catch (error) {
     return fail(error);
   }
@@ -157,7 +156,6 @@ export async function checkWebNews(key: string, week: number): Promise<NewsCheck
     method: itemsRead === null ? 'web-search' : 'gathered',
     ...(itemsRead !== null ? { itemsRead, sourcesUsed } : {}),
   });
-  revalidatePath('/', 'layout');
 
   const n = parsed.findings.length;
   const dropped = parsed.rejected.length;
@@ -179,13 +177,11 @@ export async function checkWebNews(key: string, week: number): Promise<NewsCheck
 /** Use or ignore one finding. */
 export async function toggleFinding(key: string, week: number, playerId: string, enabled: boolean): Promise<void> {
   setFindingEnabled(key, week, playerId, enabled);
-  revalidatePath('/', 'layout');
 }
 
 /** Remove a week's findings; projections go back to the platform's. */
 export async function clearWebNews(key: string, week: number): Promise<void> {
   clearNewsReport(key, week);
-  revalidatePath('/', 'layout');
 }
 
 function fail(error: unknown): NewsCheckResult {

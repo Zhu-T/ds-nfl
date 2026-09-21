@@ -5,6 +5,7 @@ import { NavRail } from '@/components/nav-rail';
 import { WeekToggle } from '@/components/week-toggle';
 import { loadWeek } from '@/lib/week';
 import { leagueSummaries } from '@ds-nfl/adapters';
+import { RENDER_STAMP_ID, renderStamp } from '@/lib/render-stamp';
 
 export const metadata: Metadata = {
   title: 'ds-nfl',
@@ -28,6 +29,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
       <body>
+        {/* Changes with every render, so a refresh can be seen to have landed (see use-refresh.ts). */}
+        <div id={RENDER_STAMP_ID} data-at={renderStamp()} hidden />
         <header className="scorebug">
           <div className="scorebug__seg scorebug__seg--brand">ds·nfl</div>
 

@@ -16,6 +16,8 @@ import { formLabel } from '@/lib/form-label';
 const pts = (n: number) => n.toFixed(1);
 /** "RB_WR" reads as "RB/WR". */
 const slotLabel = (slot: string) => slot.replace('_', '/');
+/** "this week through week 5": a running total from now. */
+const weeksLabel = (weeks: readonly number[]) => (weeks.length > 1 ? `this week through week ${weeks.at(-1)}` : 'this week');
 /** "ESPN, Google News and Ollama web search". */
 const listSources = (sources: readonly string[]) =>
   sources.length <= 1 ? (sources[0] ?? '') : `${sources.slice(0, -1).join(', ')} and ${sources.at(-1)}`;
@@ -246,7 +248,18 @@ function Evaluation({
           <li>
             Your best lineup: {pts(v.withoutPlayer)} without them, {pts(v.withPlayer)} with them
           </li>
-          {!v.onRoster && v.value > 0 && v.dropCandidate && <li>Weakest player to drop for them: {v.dropCandidate}</li>}
+          {e.horizon.weeks.length > 1 && (
+            <li>
+              From {weeksLabel(e.horizon.weeks)}: {v.onRoster ? 'losing them costs your best lineups' : 'adds to your best lineups'}{' '}
+              {pts(e.horizon.total)} ({e.horizon.weeks.map((w, i) => `wk ${w} ${pts(e.horizon.byWeek[i] ?? 0)}`).join(', ')})
+            </li>
+          )}
+          {!v.onRoster && e.horizon.drop && (v.value > 0 || e.horizon.total > 0) && (
+            <li>
+              Player to drop for them: {e.horizon.drop.name}, whose absence costs your best lineups{' '}
+              {pts(e.horizon.drop.total)} over {weeksLabel(e.horizon.weeks)}
+            </li>
+          )}
           {how && <li>{how}</li>}
           {e.ownerKind === 'team' &&
             (e.trade ? (

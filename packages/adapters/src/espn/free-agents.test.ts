@@ -14,6 +14,8 @@ const espn = activeLeague();
 const suite = espn ? describe : describe.skip;
 
 suite('ESPN free-agent pool (live)', () => {
+  // describe.skip still runs this body to collect its tests; without a league there is nothing to read.
+  if (!espn) return;
   const reader = new EspnReader({ espnS2: espn!.espnS2, swid: espn!.swid });
   const ref = {
     platform: 'espn' as const,

@@ -149,6 +149,11 @@ export interface RosterPlayer {
   readonly seasonAverage?: number;
   /** Games played this season. */
   readonly gamesPlayed?: number;
+  /** Points actually scored in the requested week, under the league's rules; absent before the game. */
+  readonly actualPoints?: number;
+  /** ESPN's projection per game for the rest of this season, and the games it covers. */
+  readonly restOfSeasonAverage?: number;
+  readonly restOfSeasonGames?: number;
   /** ESPN's projected stat line for the week (stat id → value), when ESPN published one. */
   readonly projectedStats?: Readonly<Record<string, number>>;
   /** ESPN's defaultPositionId, the id space its scoring overrides are keyed by. */

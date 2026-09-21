@@ -30,6 +30,8 @@ export interface TeamOdds {
   readonly impliedPoints: number;
   readonly provider: string;
   readonly eventId: string;
+  /** When the game kicks off, ISO; null when ESPN does not say. */
+  readonly kickoff: string | null;
 }
 
 /** Over/under lines for one player. Only the stats the blend uses are kept. */
@@ -76,10 +78,11 @@ export function parseScoreboardOdds(data: unknown): TeamOdds[] {
     }
     const provider = String(odds?.provider?.name ?? 'Sportsbook');
     const eventId = String(event.id);
+    const kickoff = typeof event.date === 'string' && event.date ? event.date : null;
     // `spread` is the home team's number: -4.5 means home is favored by 4.5.
     out.push(
-      { team: home, opponent: away, home: true, spread, total, impliedPoints: round1((total - spread) / 2), provider, eventId },
-      { team: away, opponent: home, home: false, spread: -spread, total, impliedPoints: round1((total + spread) / 2), provider, eventId },
+      { team: home, opponent: away, home: true, spread, total, impliedPoints: round1((total - spread) / 2), provider, eventId, kickoff },
+      { team: away, opponent: home, home: false, spread: -spread, total, impliedPoints: round1((total + spread) / 2), provider, eventId, kickoff },
     );
   }
   return out;

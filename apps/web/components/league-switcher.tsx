@@ -1,6 +1,7 @@
 'use client';
 
 import { useTransition } from 'react';
+import { useRefresh } from '@/lib/use-refresh';
 import type { LeagueSummary } from '@ds-nfl/adapters';
 import { switchLeague } from '@/app/league-actions';
 
@@ -9,6 +10,7 @@ const label = (l: LeagueSummary) => `${l.leagueName}${l.teamName ? ` · ${l.team
 /** Which league every page shows. A plain label until a second league is connected. */
 export function LeagueSwitcher({ leagues }: { leagues: readonly LeagueSummary[] }) {
   const [pending, start] = useTransition();
+  const refresh = useRefresh();
   if (leagues.length === 0) return null;
   const active = leagues.find((l) => l.active) ?? leagues[0]!;
 
@@ -25,7 +27,10 @@ export function LeagueSwitcher({ leagues }: { leagues: readonly LeagueSummary[] 
           aria-label="Active league"
           onChange={(e) => {
             const key = e.target.value;
-            start(() => switchLeague(key));
+            start(async () => {
+              await switchLeague(key);
+              refresh();
+            });
           }}
         >
           {leagues.map((l) => (

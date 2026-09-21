@@ -16,8 +16,9 @@ import {
   type LlmProvider,
 } from '@ds-nfl/llm';
 
-/** The model this machine already had installed for the previous version. */
-export const DEFAULT_OLLAMA_MODEL = 'deepseek-r1:14b';
+import { DEFAULT_OLLAMA_MODEL, ollamaModelFor, type AiTask } from './ai-models';
+
+export { DEFAULT_OLLAMA_MODEL, type AiTask };
 
 export interface AiStatus {
   readonly provider: 'off' | 'claude' | 'ollama';
@@ -26,6 +27,14 @@ export interface AiStatus {
   readonly anthropicKeySet: boolean;
   readonly ollamaUrl: string;
   readonly ollamaModel: string;
+  /** The model for background judgement tasks; null when it is the same as `ollamaModel`. */
+  readonly ollamaJudgmentModel: string | null;
+  /** Label for the panels that run judgement tasks: the news check, waiver picks, and news reads. */
+  readonly judgmentLabel: string | null;
+  /** The model for the League AI chat; null when it is the same as `ollamaModel`. */
+  readonly ollamaChatModel: string | null;
+  /** Label for the League AI chat. */
+  readonly chatLabel: string | null;
   /** Whether an Ollama web search key is stored. Never the key itself. */
   readonly ollamaSearchKeySet: boolean;
 }
@@ -49,16 +58,33 @@ export function aiStatus(): AiStatus {
     anthropicKeySet: Boolean(s.anthropicApiKey),
     ollamaUrl: s.ollamaUrl ?? DEFAULT_OLLAMA_URL,
     ollamaModel,
+    ollamaJudgmentModel: s.ollamaJudgmentModel ?? null,
+    judgmentLabel:
+      s.provider === 'claude'
+        ? `Claude (${CLAUDE_MODEL})`
+        : s.provider === 'ollama'
+          ? `${ollamaModelFor(s, 'judgment')} (local)`
+          : null,
+    ollamaChatModel: s.ollamaChatModel ?? null,
+    chatLabel:
+      s.provider === 'claude'
+        ? `Claude (${CLAUDE_MODEL})`
+        : s.provider === 'ollama'
+          ? `${ollamaModelFor(s, 'chat')} (local)`
+          : null,
     ollamaSearchKeySet: Boolean(s.ollamaApiKey),
   };
 }
 
-/** Null when the AI layer is off. Throws an LlmError when it is on but unusable. */
-export function currentProvider(): LlmProvider | null {
+/**
+ * Null when the AI layer is off. Throws an LlmError when it is on but unusable.
+ * `task` picks the Ollama model: judgement tasks may use a separate one.
+ */
+export function currentProvider(task: AiTask = 'writing'): LlmProvider | null {
   const s = aiSettings();
   if (s.provider === 'claude') return createClaudeProvider(s.anthropicApiKey);
   if (s.provider === 'ollama') {
-    return new OllamaProvider(s.ollamaModel ?? DEFAULT_OLLAMA_MODEL, s.ollamaUrl ?? DEFAULT_OLLAMA_URL);
+    return new OllamaProvider(ollamaModelFor(s, task), s.ollamaUrl ?? DEFAULT_OLLAMA_URL);
   }
   return null;
 }

@@ -23,6 +23,8 @@ export interface ChatMessage {
   readonly lookedUp?: readonly string[];
   /** For a question: the looked-up rows as the model saw them, so later answers may quote them. */
   readonly lookup?: string;
+  /** For an answer: the model's reasoning, shown on request and never checked or sent back. */
+  readonly reasoning?: string;
 }
 
 /** Old messages beyond this are dropped from the file. */

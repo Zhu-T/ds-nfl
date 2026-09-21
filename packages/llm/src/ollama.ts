@@ -21,7 +21,8 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_CONTEXT_TOKENS = 8_192;
 
 interface OllamaChatResponse {
-  readonly message?: { readonly content?: string };
+  /** Newer Ollama returns a reasoning model's thinking separately; older builds inline it in `content`. */
+  readonly message?: { readonly content?: string; readonly thinking?: string };
 }
 
 interface OllamaTagsResponse {
@@ -71,9 +72,13 @@ export class OllamaProvider implements LlmProvider {
     if (!res.ok) throw new LlmError('bad-response', `Ollama returned HTTP ${res.status}.`);
 
     const data = (await res.json()) as OllamaChatResponse;
-    const text = stripThinking(data.message?.content ?? '').trim();
+    const raw = data.message?.content ?? '';
+    const text = stripThinking(raw).trim();
     if (!text) throw new LlmError('bad-response', 'The local model returned no text.');
-    return { text, provider: 'ollama', model: this.model };
+    // Kept for display, so the answer can be questioned; see LlmText.reasoning.
+    const inline = [...raw.matchAll(/<think>([\s\S]*?)<\/think>/gi)].map((m) => m[1]!.trim()).filter(Boolean).join('\n\n');
+    const reasoning = (data.message?.thinking ?? '').trim() || inline;
+    return { text, provider: 'ollama', model: this.model, ...(reasoning ? { reasoning } : {}) };
   }
 
   private async post(body: unknown, timeoutMs: number): Promise<Response> {

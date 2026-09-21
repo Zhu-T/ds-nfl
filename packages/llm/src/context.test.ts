@@ -128,6 +128,19 @@ describe('leagueContext', () => {
     expect(leagueContext({ ...input, available: [] }).sections[3]!.body).toBe('No unrostered players were loaded.');
   });
 
+  it("adds each pickup's value across the coming weeks when a horizon is given", () => {
+    const later = leagueContext({
+      ...input,
+      horizon: 'weeks 2–5',
+      waivers: [{ name: 'Titans D/ST', position: 'DST', projected: 6.8, gain: 0.7, horizonGain: 2.4, pickup: 'waivers' }],
+      available: [{ name: 'Jaylen Wright', position: 'RB', proTeam: 'MIA', projected: 6.2, pickup: 'free-agent', gain: 0, horizonGain: 5.1 }],
+    });
+    expect(later.text).toContain('- Titans D/ST (DST): projected 6.8, adds 0.7 this week and 2.4 over weeks 2–5; needs a waiver claim');
+    expect(later.text).toContain('- Jaylen Wright (RB, MIA): projected 6.2, adds 0.0 this week and 5.1 over weeks 2–5; free agent, can be added now');
+    expect(later.sections[2]!.body).toContain('across weeks 2–5');
+    expect(checkNumbers('Wright would add 5.1 over those weeks.', later.text).ok).toBe(true);
+  });
+
   it('lets an answer quote the context, news figures included, and rejects anything else', () => {
     expect(checkNumbers('Titans D/ST adds 0.7, and Wilson had 56 yards.', text).ok).toBe(true);
     expect(checkNumbers('Titans D/ST adds 1.5 points.', text).invented).toEqual([1.5]);

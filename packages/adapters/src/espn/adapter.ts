@@ -298,7 +298,7 @@ export class EspnReader implements LeagueReader {
         available: injury.available,
         ...(injury.reason ? { unavailableReason: injury.reason } : {}),
         proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season),
+        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
         locked: Boolean(entry.lineupLocked),
         ...(entry.status === 'WAIVERS'
           ? { pickup: 'waivers' as const }
@@ -336,7 +336,7 @@ export class EspnReader implements LeagueReader {
           available: injury.available && currentSlot !== 'IR',
           ...(injury.reason ? { unavailableReason: injury.reason } : {}),
           proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-          ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season),
+          ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
           locked: Boolean(entry.playerPoolEntry?.lineupLocked),
         });
       }
@@ -476,7 +476,7 @@ export class EspnReader implements LeagueReader {
         available: injury.available && currentSlot !== 'IR',
         ...(injury.reason ? { unavailableReason: injury.reason } : {}),
         proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season),
+        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
       });
     }
 
@@ -517,6 +517,27 @@ function seasonForm(stats: unknown, season: number): { seasonAverage?: number; g
   const average = hit?.appliedAverage;
   if (typeof total !== 'number' || typeof average !== 'number' || average <= 0) return {};
   return { seasonAverage: Math.round(average * 10) / 10, gamesPlayed: Math.max(1, Math.round(total / average)) };
+}
+
+/** What the player scored in the requested week, under the league's rules; absent until the game starts. */
+function weekActual(stats: unknown, week: number): { actualPoints?: number } {
+  if (!Array.isArray(stats)) return {};
+  const hit = stats.find(
+    (s: any) => s?.statSourceId === 0 && s?.statSplitTypeId === 1 && s?.scoringPeriodId === week,
+  ) as any;
+  return typeof hit?.appliedTotal === 'number' ? { actualPoints: Math.round(hit.appliedTotal * 100) / 100 } : {};
+}
+
+/** ESPN's projection for this season's remaining games: per game, and how many. Rows for other seasons are ignored. */
+function restOfSeason(stats: unknown, season: number): { restOfSeasonAverage?: number; restOfSeasonGames?: number } {
+  if (!Array.isArray(stats)) return {};
+  const hit = stats.find(
+    (s: any) => s?.statSourceId === 1 && s?.statSplitTypeId === 2 && s?.seasonId === season,
+  ) as any;
+  const total = hit?.appliedTotal;
+  const average = hit?.appliedAverage;
+  if (typeof total !== 'number' || typeof average !== 'number' || average <= 0) return {};
+  return { restOfSeasonAverage: Math.round(average * 10) / 10, restOfSeasonGames: Math.round(total / average) };
 }
 
 function weeklyProjection(stats: unknown, week: number): number {

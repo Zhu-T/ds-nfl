@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import {
   AdapterFailure,
   EspnReader,
@@ -96,7 +95,6 @@ export async function connectEspn(
       leagueName: league.name,
       teamName: mine.name,
     });
-    revalidatePath('/', 'layout');
 
     return {
       ok: true,
@@ -139,7 +137,6 @@ export async function renewCookies(
       teamId: league.teamId,
     });
     saveLeague({ ...league, espnS2, swid });
-    revalidatePath('/', 'layout');
 
     const updated = listLeagues().filter((l) => l.swid === swid).length;
     return {
@@ -154,7 +151,6 @@ export async function renewCookies(
 /** Forget a league's saved connection. Its AI conversation file is kept. */
 export async function forgetLeague(key: string): Promise<void> {
   removeLeague(key);
-  revalidatePath('/', 'layout');
 }
 
 /**
@@ -172,7 +168,6 @@ export async function saveAiSettings(
 
   if (provider === 'off') {
     writeStore({ ...store, ai: { ...previous, provider: 'off' } });
-    revalidatePath('/', 'layout');
     return { ok: true, message: 'AI explanations are off. Every recommendation works exactly the same.' };
   }
 
@@ -188,20 +183,26 @@ export async function saveAiSettings(
       }
     }
     writeStore({ ...store, ai: { ...previous, provider: 'claude', anthropicApiKey: key } });
-    revalidatePath('/', 'layout');
     return { ok: true, message: 'Claude will write explanations, one short request each time you ask.' };
   }
 
   if (provider === 'ollama') {
     const url = String(form.get('ollamaUrl') ?? '').trim() || DEFAULT_OLLAMA_URL;
     const model = String(form.get('ollamaModel') ?? '').trim() || DEFAULT_OLLAMA_MODEL;
+    // Blank, or the same as the main model, means one model for everything.
+    const pickedJudgment = String(form.get('ollamaJudgmentModel') ?? '').trim();
+    const judgment = pickedJudgment && pickedJudgment !== model ? pickedJudgment : null;
+    const pickedChat = String(form.get('ollamaChatModel') ?? '').trim();
+    const chat = pickedChat && pickedChat !== model ? pickedChat : null;
     try {
       const installed = await listOllamaModels(url);
-      if (!installed.includes(model)) {
-        return {
-          ok: false,
-          message: `Ollama is running, but "${model}" is not installed. Installed: ${installed.join(', ') || 'none'}. Run: ollama pull ${model}`,
-        };
+      for (const wanted of [model, ...(judgment ? [judgment] : []), ...(chat ? [chat] : [])]) {
+        if (!installed.includes(wanted)) {
+          return {
+            ok: false,
+            message: `Ollama is running, but "${wanted}" is not installed. Installed: ${installed.join(', ') || 'none'}. Run: ollama pull ${wanted}`,
+          };
+        }
       }
     } catch (error) {
       return { ok: false, message: error instanceof LlmError ? error.message : String(error) };
@@ -215,7 +216,14 @@ export async function saveAiSettings(
         return { ok: false, message: error instanceof Error ? error.message : String(error) };
       }
     }
-    const { ollamaApiKey: storedSearchKey, ...rest } = previous ?? { provider: 'off' as const };
+    const {
+      ollamaApiKey: storedSearchKey,
+      ollamaJudgmentModel: _previousJudgment,
+      ollamaChatModel: _previousChat,
+      ...rest
+    } = previous ?? {
+      provider: 'off' as const,
+    };
     const searchKey = newSearchKey || (form.get('removeOllamaKey') === 'on' ? undefined : storedSearchKey);
 
     writeStore({
@@ -225,15 +233,16 @@ export async function saveAiSettings(
         provider: 'ollama',
         ollamaUrl: url,
         ollamaModel: model,
+        ...(judgment ? { ollamaJudgmentModel: judgment } : {}),
+        ...(chat ? { ollamaChatModel: chat } : {}),
         ...(searchKey ? { ollamaApiKey: searchKey } : {}),
       },
     });
-    revalidatePath('/', 'layout');
     return {
       ok: true,
       message: `${model} will write explanations, running on this computer.${
-        searchKey ? ' News checks also use Ollama web search.' : ''
-      }`,
+        judgment ? ` ${judgment} handles the news check, waiver picks, and news reads.` : ''
+      }${chat ? ` ${chat} answers in the League AI chat.` : ''}${searchKey ? ' News checks also use Ollama web search.' : ''}`,
     };
   }
 

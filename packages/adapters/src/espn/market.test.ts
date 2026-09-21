@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { marketAdjustment } from './market.js';
+import { calibrateMarket, kickoffWindow, marketAdjustment } from './market.js';
 import { parseEspnScoring } from './scoring.js';
 
 // Half-PPR: 0.04 per passing yard, 0.1 per rushing/receiving yard, 0.5 per reception,
@@ -53,5 +53,46 @@ describe('marketAdjustment', () => {
     expect(marketAdjustment({ projectedPoints: 5 }, { recYds: 50 }, halfPpr)).toBeNull();
     // A line for a stat the league does not score changes nothing.
     expect(marketAdjustment({ ...wr, projectedStats: { '53': 4 } }, { receptions: 6 }, standard)).toBeNull();
+  });
+});
+
+describe('calibrateMarket', () => {
+  const sample = (line: number, espn: number, window: 'near' | 'far' = 'near') => ({ key: 'recYds' as const, line, espn, window });
+
+  it('makes no correction without lines', () => {
+    const c = calibrateMarket([]);
+    expect(c.factor('recYds', 'near')).toBe(1);
+    expect(c.samples).toBe(0);
+  });
+
+  it('measures the typical ratio per kickoff window, pulled toward the week and the week toward 1', () => {
+    // Twelve near-game lines all 20% above ESPN; none yet for later games.
+    const c = calibrateMarket(Array.from({ length: 12 }, () => sample(60, 50)));
+    // Week: (12 x 1.2 + 12 x 1) / 24 = 1.1. Near: (12 x 1.2 + 12 x 1.1) / 24 = 1.15. Far falls back to the week.
+    expect(c.factor('recYds', 'near')).toBe(1.15);
+    expect(c.factor('recYds', 'far')).toBe(1.1);
+    expect(c.factor('passYds', 'near')).toBe(1);
+  });
+
+  it('ignores players ESPN projects for almost nothing', () => {
+    expect(calibrateMarket([sample(10, 2), sample(8, 3)]).samples).toBe(0);
+  });
+});
+
+describe('marketAdjustment with calibration', () => {
+  it('changes nothing when a line is only as far above ESPN as lines typically are', () => {
+    // 72.6 over 60.7 is the same 1.2 premium every near-game line carries: no signal about this player.
+    expect(marketAdjustment(wr, { recYds: 72.6 }, halfPpr, 0.5, () => 1.2)).toBeNull();
+    // Uncalibrated, the same line would have lifted him.
+    expect(marketAdjustment(wr, { recYds: 72.6 }, halfPpr)!.blended).toBe(12.4);
+  });
+});
+
+describe('kickoffWindow', () => {
+  const now = Date.parse('2026-09-21T12:00:00Z');
+  it('is near within 36 hours of kickoff, far otherwise or when unknown', () => {
+    expect(kickoffWindow('2026-09-22T00:15Z', now)).toBe('near');
+    expect(kickoffWindow('2026-09-25T00:15Z', now)).toBe('far');
+    expect(kickoffWindow(null, now)).toBe('far');
   });
 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useState, useTransition } from 'react';
+import { useRefresh } from '@/lib/use-refresh';
 import type { MatchedPick, WebPicksReport } from '@ds-nfl/adapters';
 import { checkWaiverPicks, clearWaiverPicks, type PicksResult } from '@/app/waivers/picks-actions';
 
@@ -53,6 +54,7 @@ export function WaiverPicksPanel({
   // Clearing is a quick save and must not look like a new search.
   const [checking, startCheck] = useTransition();
   const [clearing, startClear] = useTransition();
+  const refresh = useRefresh();
   const [result, setResult] = useState<PicksResult | null>(null);
   const pending = checking || clearing;
 
@@ -91,7 +93,10 @@ export function WaiverPicksPanel({
               startCheck(async () => {
                 const answer = await checkWaiverPicks(leagueKey, week);
                 // Inside the transition, so the message and the refreshed picks appear together.
-                startCheck(() => setResult(answer));
+                startCheck(() => {
+                  setResult(answer);
+                  refresh();
+                });
               })
             }
           >
@@ -173,7 +178,10 @@ export function WaiverPicksPanel({
             disabled={pending}
             onClick={() => {
               setResult(null);
-              startClear(() => clearWaiverPicks(leagueKey, week));
+              startClear(async () => {
+                await clearWaiverPicks(leagueKey, week);
+                refresh();
+              });
             }}
           >
             {clearing ? 'Removing…' : 'Remove these picks'}

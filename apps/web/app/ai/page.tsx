@@ -3,8 +3,7 @@ import { LoadState } from '@/components/loaded';
 import { aiStatus } from '@/lib/ai';
 import { buildLeagueContext } from '@/lib/league-context';
 import { Chat } from './chat';
-import { refreshPlayerList } from './actions';
-import { RefreshListButton } from './refresh-list';
+import { RefreshListForm } from './refresh-list';
 
 function ago(iso: string): string {
   const minutes = Math.floor((Date.now() - Date.parse(iso)) / 60_000);
@@ -50,10 +49,7 @@ export default async function LeagueAiPage() {
               ? `For each question it also looks up the players, fantasy teams, and positions you name in the league's player list: ${view.playerList.players.length} players, updated ${ago(view.playerList.updatedAt)}. The list is rebuilt when it is over 10 minutes old or the news check or web picks change.`
               : "The league's player list could not be loaded, so questions are answered from the brief alone."}
           </p>
-          <form action={refreshPlayerList}>
-            <input type="hidden" name="league" value={view.key} />
-            <RefreshListButton />
-          </form>
+          <RefreshListForm leagueKey={view.key} />
         </div>
       </section>
 
@@ -63,7 +59,7 @@ export default async function LeagueAiPage() {
           week={view.week}
           initial={readConversation(view.key)}
           enabled={ai.provider !== 'off'}
-          providerLabel={ai.label ?? ''}
+          providerLabel={ai.chatLabel ?? ai.label ?? ''}
         />
       </section>
 

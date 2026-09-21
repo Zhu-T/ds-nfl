@@ -16,6 +16,8 @@ const espn = activeLeague();
 const suite = espn ? describe : describe.skip;
 
 suite('ESPN live read', () => {
+  // describe.skip still runs this body to collect its tests; without a league there is nothing to read.
+  if (!espn) return;
   const creds = { espnS2: espn!.espnS2, swid: espn!.swid };
   const ref: LeagueRef = {
     platform: 'espn',

@@ -63,6 +63,16 @@ export function Chat({
               <span className="ai__attr">Looked up: {lookedUpLabel(m.lookedUp)}</span>
             )}
             {m.role === 'assistant' && m.author && <span className="ai__attr">{m.author}</span>}
+            {m.role === 'assistant' && m.reasoning && (
+              <details className="chat__reasoning">
+                <summary>Show reasoning</summary>
+                <p>{m.reasoning}</p>
+                <p className="field__hint">
+                  The model&apos;s own working, as it wrote it. Not checked: only the answer above goes through the
+                  number check.
+                </p>
+              </details>
+            )}
           </div>
         ))}
         {pending && (

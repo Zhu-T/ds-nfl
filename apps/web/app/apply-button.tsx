@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { applyLineup, type ApplyResult } from './actions';
+import { useRefresh } from '@/lib/use-refresh';
 
 export function ApplyButton({
   leagueKey,
@@ -18,10 +19,12 @@ export function ApplyButton({
   disabledReason?: string;
   label: string;
 }) {
-  const [result, submit, pending] = useActionState<ApplyResult | null, FormData>(
-    async () => applyLineup(leagueKey ?? '', week),
-    null,
-  );
+  const refresh = useRefresh();
+  const [result, submit, pending] = useActionState<ApplyResult | null, FormData>(async () => {
+    const applied = await applyLineup(leagueKey ?? '', week);
+    if (applied.ok) refresh();
+    return applied;
+  }, null);
 
   return (
     <div className="apply">

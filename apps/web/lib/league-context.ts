@@ -166,19 +166,29 @@ export async function buildLeagueContext(
       }),
       waivers:
         waivers.state === 'ok'
-          ? waivers.data.candidates
-              .filter((c) => c.lineupGain > 0)
-              .slice(0, 5)
-              .map((c) => {
-                const pickup = waivers.data.pickupById[c.player.gsisId];
-                return {
-                  name: c.player.name,
-                  position: c.player.position,
-                  projected: c.player.projectedPoints,
-                  gain: c.lineupGain,
-                  ...(pickup ? { pickup } : {}),
-                };
-              })
+          ? [
+              ...waivers.data.candidates.filter((c) => c.lineupGain > 0).slice(0, 5),
+              // Players who would sit this week but help across the coming weeks.
+              ...waivers.data.candidates
+                .filter((c) => c.lineupGain <= 0 && (waivers.data.horizonById[c.player.gsisId]?.total ?? 0) > 0)
+                .sort(
+                  (a, b) =>
+                    (waivers.data.horizonById[b.player.gsisId]?.total ?? 0) -
+                    (waivers.data.horizonById[a.player.gsisId]?.total ?? 0),
+                )
+                .slice(0, 3),
+            ].map((c) => {
+              const pickup = waivers.data.pickupById[c.player.gsisId];
+              const later = waivers.data.horizonById[c.player.gsisId];
+              return {
+                name: c.player.name,
+                position: c.player.position,
+                projected: c.player.projectedPoints,
+                gain: c.lineupGain,
+                ...(later ? { horizonGain: later.total } : {}),
+                ...(pickup ? { pickup } : {}),
+              };
+            })
           : [],
       ...(waivers.state === 'ok'
         ? {
@@ -197,10 +207,14 @@ export async function buildLeagueContext(
                 projected: p.projected,
                 pickup: p.pickup,
                 gain: p.gain,
+                ...(p.horizonGain > 0 ? { horizonGain: p.horizonGain } : {}),
                 ...(note ? { note } : {}),
               };
             }),
           }
+        : {}),
+      ...(waivers.state === 'ok' && waivers.data.horizonWeeks.length > 1
+        ? { horizon: `weeks ${waivers.data.horizonWeeks[0]}–${waivers.data.horizonWeeks.at(-1)}` }
         : {}),
       trades:
         trades.state === 'ok'
