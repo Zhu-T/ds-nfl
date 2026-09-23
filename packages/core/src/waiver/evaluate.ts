@@ -34,11 +34,15 @@ function round2(n: number): number {
  * Candidates who improve nothing are returned with `lineupGain: 0` rather than
  * dropped, so the caller can show "nobody available helps" — which is a real and
  * useful answer, not an empty list.
+ *
+ * `protectedIds` are players the user has marked as never to be dropped; they
+ * are skipped when naming who would make room.
  */
 export function rankWaiverCandidates(
   roster: readonly OptimizerPlayer[],
   candidates: readonly OptimizerPlayer[],
   settings: RosterSettings,
+  protectedIds: ReadonlySet<string> = new Set(),
 ): WaiverCandidate[] {
   const base = optimizeLineup(roster, settings);
   const baseStarters = new Set(
@@ -61,7 +65,7 @@ export function rankWaiverCandidates(
     // The cheapest player to cut to make room: lowest projection among those the
     // optimizer would not start anyway.
     const benched = roster
-      .filter((p) => !nowStarting.has(p.gsisId))
+      .filter((p) => !nowStarting.has(p.gsisId) && !protectedIds.has(p.gsisId))
       .sort((a, b) => a.projectedPoints - b.projectedPoints);
 
     return {
@@ -106,6 +110,7 @@ export function valueToRoster(
   roster: readonly OptimizerPlayer[],
   player: OptimizerPlayer,
   settings: RosterSettings,
+  protectedIds: ReadonlySet<string> = new Set(),
 ): PlayerValue {
   const onRoster = roster.some((p) => p.gsisId === player.gsisId);
   const others = roster.filter((p) => p.gsisId !== player.gsisId);
@@ -128,8 +133,9 @@ export function valueToRoster(
     displaces: onRoster ? null : nameOf(pushedOut),
     dropCandidate: onRoster
       ? null
-      : ([...others].filter((p) => !after.has(p.gsisId)).sort((a, b) => a.projectedPoints - b.projectedPoints)[0]?.name ??
-        null),
+      : ([...others]
+          .filter((p) => !after.has(p.gsisId) && !protectedIds.has(p.gsisId))
+          .sort((a, b) => a.projectedPoints - b.projectedPoints)[0]?.name ?? null),
     replacedBy: onRoster ? nameOf(pushedOut) : null,
   };
 }

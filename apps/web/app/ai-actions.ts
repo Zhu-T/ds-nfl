@@ -71,6 +71,10 @@ export async function pitchTrade(_prev: AiResult | null, form: FormData): Promis
   if (!idea) {
     return { ok: false, message: 'That trade is no longer on the board. Reload the page for the current list.' };
   }
+  // The button is withheld for a protected player; the action refuses them too.
+  if (idea.giveProtected) {
+    return { ok: false, message: `${idea.give} is protected. Unprotect them on the Waivers page to trade them.` };
+  }
 
   const input = {
     week: trades.data.week,

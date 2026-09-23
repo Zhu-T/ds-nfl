@@ -144,6 +144,14 @@ value.
   total from this week through the three after it ("Through week 5" in week 2). Later weeks use ESPN's rest-of-season projection
   per game and each NFL team's bye weeks, so a player who would sit now but covers a bye or
   out-projects your flex from here on still shows. Both numbers are on every row.
+- **Protected players** are never suggested as a drop, and cannot be dropped for a pickup.
+  Mark them on the Waivers page, under "Protected from drops". This is your own note about
+  your roster: nothing is sent to ESPN, and it is saved per league in
+  `data/<league>.protected.json`. The League AI is told which players are protected. Note
+  that "locked" elsewhere means a player's game has started, which is ESPN's doing rather
+  than yours. Trades still show and value swaps involving a protected
+  player, since knowing what they are worth is useful, but the message to the other manager
+  cannot be drafted until you unprotect them.
 - **Suggested drops** are the players your lineups would miss least across those weeks,
   not simply the lowest projection. Costs within half a point count as a tie, broken by the
   position with the most spare players for each one it starts, so a third quarterback in a
@@ -334,8 +342,27 @@ off by default, as ESPN's opponent ranks were.
 
 ### Adding and dropping
 
-Waiver rows have an **Add** (or **Claim**) button. It asks who to drop, and in leagues with a
-FAAB budget what to bid, then writes through the same transactions endpoint lineups use.
+Waiver rows have an **Add** (or **Claim**) button. It opens a confirmation showing both
+sides of the move before anything is written:
+
+- **In:** the player, their projection, what they add to your lineup this week and across the
+  coming weeks, and the starter they would displace.
+- **Out:** whoever you pick to drop, and what losing them costs your lineups over those
+  weeks. Every one of your players is listed with their cost, cheapest first, and protected
+  players are left out. When the suggested drop is not the cheapest, it says why: costs
+  within half a point are a tie, broken by the position where you have most spare players.
+- **Net** over those weeks, and whether this goes through at once or waits for the waiver run.
+- In leagues with a FAAB budget, what to bid and what is left.
+
+Confirming writes through the same transactions endpoint lineups use.
+
+**Pending claims** are read back and shown at the top of the Waivers page: who is coming in,
+who is going out, and that nothing changes until the waiver run. A player you have already
+claimed is marked "claim pending" and cannot be claimed twice, and a player already on the
+way out is not offered as a drop. The League AI is told about them too. ESPN keeps stale
+claims in the list — ones that would drop a player you no longer have — so only claims that
+could still happen are shown. A claim is **not** assumed to succeed: projections, lineups
+and waiver value all still treat your roster as it is today.
 
 - Nothing is written without that confirmation, and the app never acts on its own.
 - The server checks everything again: that the player is still available, that the drop is

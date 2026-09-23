@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rankWaiverCandidates } from './evaluate.js';
+import { rankWaiverCandidates, valueToRoster } from './evaluate.js';
 import type { OptimizerPlayer } from '../lineup/optimize.js';
 import type { RosterSettings } from '../types.js';
 
@@ -57,5 +57,36 @@ describe('rankWaiverCandidates', () => {
     // Both slots are frozen, so nobody can help this week.
     const ranked = rankWaiverCandidates(lockedRoster, [p('Star WR', 'WR', 30)], rs);
     expect(ranked[0]?.lineupGain).toBe(0);
+  });
+});
+
+describe('protected players', () => {
+  const settings: RosterSettings = { slots: { WR: 1 }, benchSize: 3, irSize: 0 };
+  const wr = (id: string, pts: number): OptimizerPlayer => ({
+    gsisId: id,
+    name: id,
+    position: 'WR',
+    eligibleSlots: ['WR'],
+    projectedPoints: pts,
+    available: true,
+  });
+
+  it('never names a protected player as the one to drop', () => {
+    const roster = [wr('starter', 15), wr('cheap', 2), wr('spare', 5)];
+    const [plain] = rankWaiverCandidates(roster, [wr('add', 12)], settings);
+    expect(plain!.dropCandidate).toBe('cheap');
+
+    const [guarded] = rankWaiverCandidates(roster, [wr('add', 12)], settings, new Set(['cheap']));
+    expect(guarded!.dropCandidate).toBe('spare');
+
+    // With everyone protected there is simply nobody to name.
+    const [none] = rankWaiverCandidates(roster, [wr('add', 12)], settings, new Set(['cheap', 'spare', 'starter']));
+    expect(none!.dropCandidate).toBeNull();
+  });
+
+  it('skips them in valueToRoster too', () => {
+    const roster = [wr('starter', 15), wr('cheap', 2), wr('spare', 5)];
+    expect(valueToRoster(roster, wr('add', 12), settings).dropCandidate).toBe('cheap');
+    expect(valueToRoster(roster, wr('add', 12), settings, new Set(['cheap'])).dropCandidate).toBe('spare');
   });
 });

@@ -35,6 +35,7 @@ import {
   leagueKey,
   readNewsReport,
   activeFindings,
+  protectedIds,
   readWebPicks,
   type WebPicksReport,
   type WeekResults,
@@ -190,14 +191,35 @@ export interface WaiverView {
   readonly horizonById: Readonly<Record<string, HorizonValue>>;
   /** For candidates worth adding: the player whose absence costs your lineups least across those weeks, by candidate id. */
   readonly dropById: Readonly<Record<string, DropSuggestion>>;
+  /** What losing each of your players would cost your lineups across those weeks, by player id: the price of using them as the drop. */
+  readonly dropCostById: Readonly<Record<string, number>>;
   /** ESPN's rostered +/- and rostered percent for each available player that has them, by id. */
   readonly trendById: Readonly<Record<string, Trend>>;
   /** Your chance of winning this week's matchup and the pickups that raise it most; null without a matchup. */
   readonly ceiling: CeilingView | null;
   /** Your players, for choosing who to drop when adding someone. */
-  readonly myRoster: readonly { readonly id: string; readonly name: string; readonly position: string; readonly locked: boolean }[];
+  readonly myRoster: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly position: string;
+    readonly locked: boolean;
+    /** Marked never to be dropped. */
+    readonly protected: boolean;
+  }[];
   /** The FAAB budget and what is left of it; null in leagues that use waiver order. */
   readonly faab: { readonly budget: number; readonly remaining: number } | null;
+  /** Claims you have already put in, which ESPN has not settled yet. */
+  readonly pending: readonly PendingMove[];
+}
+
+export interface PendingMove {
+  readonly id: string;
+  readonly kind: 'waivers' | 'free-agent';
+  readonly week: number;
+  readonly bid?: number;
+  /** Names, with ids so rows can be matched. */
+  readonly adds: readonly { readonly id: string; readonly name: string }[];
+  readonly drops: readonly { readonly id: string; readonly name: string }[];
 }
 
 export interface Trend {
@@ -250,7 +272,9 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     // Web news covers the roster and the top pickups, so both are adjusted.
     const mine = applyNewsFindings(priced(roster.players, market, matchups, formOn), findings);
     const pool = applyNewsFindings(priced(available, market, matchups, formOn), findings);
-    const ranked = rankWaiverCandidates(mine, pool, league.rosterSettings);
+    // Players you have marked as protected are never named as the one to drop.
+    const protectedSet = protectedIds(connKey);
+    const ranked = rankWaiverCandidates(mine, pool, league.rosterSettings, protectedSet);
 
     // Beyond this week: each candidate's value across the coming weeks, and who you would miss least.
     const horizon = await horizonFor(reader, ref, league, week, [...roster.players, ...available]);
@@ -271,11 +295,21 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
           .slice(0, 25),
       ]),
     ];
-    const droppable = new Set(roster.players.filter((p) => p.currentSlot !== 'IR').map((p) => p.platformPlayerId));
+    const droppable = new Set(
+      roster.players
+        .filter((p) => p.currentSlot !== 'IR' && !protectedSet.has(p.platformPlayerId))
+        .map((p) => p.platformPlayerId),
+    );
     const dropById: Record<string, DropSuggestion> = {};
     for (const c of candidates.filter((x) => x.lineupGain > 0 || reach(x) > 0).slice(0, 30)) {
       const [least] = dropCosts([...mine, c.player], horizon, league.rosterSettings, droppable);
       if (least) dropById[c.player.gsisId] = least;
+    }
+
+    // What every droppable player would cost, so a confirmation can price whichever one is chosen.
+    const dropCostById: Record<string, number> = {};
+    for (const cost of dropCosts(mine, horizon, league.rosterSettings, droppable)) {
+      dropCostById[cost.playerId] = cost.total;
     }
 
     // The pickups as the app priced them before kickoff, kept for training and checking; see results.ts.
@@ -298,6 +332,25 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     // Playing for the win: the same week's lineup plan, with locks and scores so far.
     const plan = isFuture || week === league.currentWeek ? await planLineup(connKey, week) : null;
     const ceiling = plan ? await ceilingView(plan, pool, available) : null;
+
+    // Claims already in the queue: the roster will not show them until the waiver run.
+    // ESPN keeps stale ones too — claims that would drop a player you no longer have, or
+    // add one you already got — so only those that could still happen are shown.
+    const claims = await reader.getPendingClaims(ref).catch(() => []);
+    const onRoster = new Set(roster.players.map((p) => p.platformPlayerId));
+    const live = claims.filter(
+      (claim) => claim.drops.every((id) => onRoster.has(id)) && claim.adds.every((id) => !onRoster.has(id)),
+    );
+    const nameOf = (id: string) =>
+      [...roster.players, ...available].find((p) => p.platformPlayerId === id)?.name ?? `Player ${id}`;
+    const pending: PendingMove[] = live.map((claim) => ({
+      id: claim.id,
+      kind: claim.kind,
+      week: claim.week,
+      ...(claim.bid !== undefined ? { bid: claim.bid } : {}),
+      adds: claim.adds.map((id) => ({ id, name: nameOf(id) })),
+      drops: claim.drops.map((id) => ({ id, name: nameOf(id) })),
+    }));
 
     // Dropping and bidding need your own roster and, in FAAB leagues, what is left of the budget.
     const teams = league.faabBudget > 0 ? await reader.getTeams(ref).catch(() => []) : [];
@@ -332,13 +385,16 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
       horizonWeeks: horizon.weeks,
       horizonById: Object.fromEntries(horizonById),
       dropById,
+      dropCostById,
       trendById,
       ceiling,
+      pending,
       myRoster: roster.players.map((p) => ({
         id: p.platformPlayerId,
         name: p.name,
         position: p.position,
         locked: p.locked && !isFuture,
+        protected: protectedSet.has(p.platformPlayerId),
       })),
       faab,
     };
@@ -606,7 +662,10 @@ export function evaluatePlayer(
       later = { weeks: horizon.weeks, total: cost?.total ?? 0, byWeek: cost?.byWeek ?? [], drop: null };
     } else {
       const value = horizonValues(mine, [target!], horizon, settings).get(found.platformPlayerId);
-      const droppable = new Set(myRoster.filter((p) => p.currentSlot !== 'IR').map((p) => p.platformPlayerId));
+      const guarded = protectedIds(connKey);
+      const droppable = new Set(
+        myRoster.filter((p) => p.currentSlot !== 'IR' && !guarded.has(p.platformPlayerId)).map((p) => p.platformPlayerId),
+      );
       const [least] = dropCosts([...mine, target!], horizon, settings, droppable);
       later = { weeks: horizon.weeks, total: value?.total ?? 0, byWeek: value?.byWeek ?? [], drop: least ?? null };
     }
@@ -838,6 +897,8 @@ export function tradeWhatIf(
 export interface TradeIdea {
   readonly opponentTeam: string;
   readonly give: string;
+  /** True when the player you would give up is protected: the trade is still shown and valued, but cannot be drafted. */
+  readonly giveProtected: boolean;
   readonly giveProjected: number;
   readonly get: string;
   readonly getProjected: number;
@@ -865,6 +926,8 @@ export function loadTrades(key?: string | null, requestedWeek?: number | null): 
     const mine = applyNewsFindings(priced(all.get(ref.teamId) ?? [], market, matchups, formOn), findings);
     const myBase = optimizeLineup(mine, settings).projectedPoints;
 
+    // Protected players are still weighed and shown; the pitch is what is withheld.
+    const guarded = protectedIds(connKey);
     const ideas: TradeIdea[] = [];
     let evaluated = 0;
 
@@ -889,6 +952,7 @@ export function loadTrades(key?: string | null, requestedWeek?: number | null): 
           ideas.push({
             opponentTeam: team.name,
             give: give.name,
+            giveProtected: guarded.has(give.gsisId),
             giveProjected: give.projectedPoints,
             get: get.name,
             getProjected: get.projectedPoints,

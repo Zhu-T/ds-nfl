@@ -179,12 +179,30 @@ export class EspnWriter {
     if (!request.add && !request.drop) {
       throw new AdapterFailure({ kind: 'not-supported', capability: 'addDrop', reason: 'There is nothing to add or drop.' });
     }
+    // Each item names the team it moves to or from. ESPN rejects an ADD without
+    // `toTeamId` ("Required field toTeamId missing from ADD TransactionItem"),
+    // which a lineup move does not need because the player is already yours.
+    const teamId = Number(ref.teamId);
     const items = [
       ...(request.add
-        ? [{ playerId: Number(request.add.platformPlayerId), type: 'ADD', toLineupSlotId: slotId(request.add.toSlot) }]
+        ? [
+            {
+              playerId: Number(request.add.platformPlayerId),
+              type: 'ADD',
+              toTeamId: teamId,
+              toLineupSlotId: slotId(request.add.toSlot),
+            },
+          ]
         : []),
       ...(request.drop
-        ? [{ playerId: Number(request.drop.platformPlayerId), type: 'DROP', fromLineupSlotId: slotId(request.drop.fromSlot) }]
+        ? [
+            {
+              playerId: Number(request.drop.platformPlayerId),
+              type: 'DROP',
+              fromTeamId: teamId,
+              fromLineupSlotId: slotId(request.drop.fromSlot),
+            },
+          ]
         : []),
     ];
     const claim = request.kind === 'waivers';

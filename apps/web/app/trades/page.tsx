@@ -54,7 +54,10 @@ export default async function TradesPage() {
                     <div className="swap">
                       <div className="swap__row swap__out">
                         <span className="swap__mark swap__mark--out">GIVE</span>
-                        <span className="swap__who">{t.give}</span>
+                        <span className="swap__who">
+                          {t.giveProtected ? '🔒 ' : ''}
+                          {t.give}
+                        </span>
                         <span className="swap__pts">{t.giveProjected.toFixed(1)} proj</span>
                       </div>
                       <div className="swap__row swap__in">
@@ -64,7 +67,13 @@ export default async function TradesPage() {
                           {t.getProjected.toFixed(1)} proj · {t.opponentTeam}
                         </span>
                       </div>
-                      {ai.provider !== 'off' && (
+                      {t.giveProtected ? (
+                        <p className="field__hint">
+                          {t.give} is protected, so there is no message to draft. Unprotect them under
+                          &ldquo;Protected from drops&rdquo; on the Waivers page to trade them.
+                        </p>
+                      ) : (
+                        ai.provider !== 'off' && (
                         <PitchButton
                           give={t.give}
                           get={t.get}
@@ -73,6 +82,7 @@ export default async function TradesPage() {
                           week={data.week}
                           providerLabel={ai.label ?? ''}
                         />
+                        )
                       )}
                     </div>
                     <div className="slot__pts">

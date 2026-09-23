@@ -47,6 +47,13 @@ export interface ContextAvailable {
   readonly rosteredChange?: number;
 }
 
+export interface ContextPending {
+  readonly kind: 'waivers' | 'free-agent';
+  readonly week: number;
+  readonly adds: readonly string[];
+  readonly drops: readonly string[];
+}
+
 export interface ContextUpside {
   readonly opponent: string;
   /** Your best-projected lineup's total minus theirs. */
@@ -91,6 +98,8 @@ export interface LeagueContextInput {
   readonly horizon?: string;
   /** Your chance of winning this week's matchup, in percent, and the pickups that raise it most. */
   readonly upside?: ContextUpside;
+  /** Claims already put in and not yet settled. */
+  readonly pending?: readonly ContextPending[];
   readonly trades: readonly ContextTrade[];
   readonly news: readonly ContextNews[];
   /** Title for the first section, e.g. "Week 2 (next week, not started)". */
@@ -119,7 +128,13 @@ export function leagueContext(input: LeagueContextInput): {
   const sections: ContextSection[] = [
     { title: input.weekLabel ?? 'This week', body: input.lineupFacts },
     { title: 'Your roster', body: rosterBody(input.roster) },
-    { title: 'Waiver wire', body: waiverBody(input.waivers, input.horizon) + (input.upside ? `\n${upsideBody(input.upside)}` : '') },
+    {
+      title: 'Waiver wire',
+      body:
+        waiverBody(input.waivers, input.horizon) +
+        (input.pending && input.pending.length > 0 ? `\n${pendingBody(input.pending)}` : '') +
+        (input.upside ? `\n${upsideBody(input.upside)}` : ''),
+    },
     ...(input.available ? [{ title: 'Available players', body: availableBody(input.available, input.horizon) }] : []),
     { title: 'Trade ideas', body: tradeBody(input.trades) },
     { title: 'Recent news', body: newsBody(input.news) },
@@ -170,6 +185,16 @@ function waiverBody(waivers: readonly ContextWaiver[], horizon?: string): string
             : '';
       return `- ${w.name} (${w.position}): projected ${n(w.projected)}, ${adds(w.gain, w.horizonGain, horizon)}${how}`;
     }),
+  ].join('\n');
+}
+
+function pendingBody(pending: readonly ContextPending[]): string {
+  return [
+    'Claims already put in, which the platform has not settled yet. Do not suggest making them again, and do not suggest dropping a player already on the way out. The roster above still shows the team as it is, because nothing changes until a claim is processed:',
+    ...pending.map(
+      (p) =>
+        `- ${p.kind === 'waivers' ? 'Waiver claim' : 'Add'} for week ${p.week}: ${p.adds.join(', ') || 'nobody'} in${p.drops.length > 0 ? `, ${p.drops.join(', ')} out` : ''}`,
+    ),
   ].join('\n');
 }
 

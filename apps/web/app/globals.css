@@ -1886,3 +1886,35 @@ form.weektoggle {
 .slot__actions {
   margin-top: 0.45rem;
 }
+
+.addmove--open {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.addmove__swap .swap__row {
+  margin: 0.15rem 0;
+}
+
+.addmove__net {
+  margin: 0.5rem 0 0;
+  color: var(--text-muted);
+}
+
+.addmove__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.addmove__fine {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}

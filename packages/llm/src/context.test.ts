@@ -176,3 +176,15 @@ describe('leagueContext', () => {
     expect(checkNumbers('Titans D/ST adds 1.5 points.', text).invented).toEqual([1.5]);
   });
 });
+
+describe('pending claims', () => {
+  it('lists claims already put in, so the model does not suggest them again', () => {
+    const ctx = leagueContext({
+      ...input,
+      pending: [{ kind: 'waivers', week: 3, adds: ['Tyler Loop'], drops: ['Eagles D/ST'] }],
+    });
+    expect(ctx.sections[2]!.body).toContain('Waiver claim for week 3: Tyler Loop in, Eagles D/ST out');
+    expect(ctx.sections[2]!.body).toContain('Do not suggest making them again');
+    expect(leagueContext({ ...input, pending: [] }).sections[2]!.body).not.toContain('already put in');
+  });
+});

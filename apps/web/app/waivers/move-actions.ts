@@ -1,6 +1,6 @@
 'use server';
 
-import { AdapterFailure, EspnWriter, describeError } from '@ds-nfl/adapters';
+import { AdapterFailure, EspnWriter, describeError, protectedIds } from '@ds-nfl/adapters';
 import { planLineup } from '@/lib/week';
 
 export interface MoveResult {
@@ -42,6 +42,9 @@ export async function addDropPlayer(
     if (dropId && !drop) return { ok: false, message: 'The player to drop is not on your roster any more. Reload the page.' };
     if (drop?.locked && !plan.isFuture) {
       return { ok: false, message: `${drop.name}'s game has started, so ESPN will not let you drop them.` };
+    }
+    if (drop && protectedIds(plan.key).has(drop.platformPlayerId)) {
+      return { ok: false, message: `${drop.name} is protected. Unprotect them on the Waivers page first.` };
     }
 
     const writer = new EspnWriter({ espnS2: plan.conn.espnS2, swid: plan.conn.swid }, (r, w) => plan.reader.getSlotMap(r, w));

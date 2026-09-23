@@ -74,8 +74,9 @@ describe('EspnWriter addDrop', () => {
       scoringPeriodId: 3,
       executionType: 'EXECUTE',
       items: [
-        { playerId: 99, type: 'ADD', toLineupSlotId: 20 },
-        { playerId: 7, type: 'DROP', fromLineupSlotId: 20 },
+        // ESPN refuses an ADD without toTeamId, which a live 409 proved.
+        { playerId: 99, type: 'ADD', toTeamId: 4, toLineupSlotId: 20 },
+        { playerId: 7, type: 'DROP', fromTeamId: 4, fromLineupSlotId: 20 },
       ],
     });
     expect(res.request!.body).not.toHaveProperty('bidAmount');
@@ -111,5 +112,38 @@ describe('EspnWriter addDrop', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('parsePendingClaims', () => {
+  it('reads your unsettled claims, and ignores other teams and settled ones', async () => {
+    const { parsePendingClaims } = await import('./adapter.js');
+    const claims = parsePendingClaims(
+      {
+        pendingTransactions: [
+          {
+            id: 'abc',
+            teamId: 4,
+            type: 'WAIVER',
+            status: 'PENDING',
+            scoringPeriodId: 3,
+            bidAmount: 0,
+            proposedDate: 1_790_000_000_000,
+            items: [
+              { playerId: 4697745, type: 'ADD', toTeamId: 4, toLineupSlotId: 20 },
+              { playerId: -16021, type: 'DROP', fromTeamId: 4, fromLineupSlotId: -1 },
+            ],
+          },
+          { id: 'other', teamId: 9, type: 'WAIVER', status: 'PENDING', scoringPeriodId: 3, items: [] },
+          { id: 'done', teamId: 4, type: 'WAIVER', status: 'EXECUTED', scoringPeriodId: 2, items: [] },
+        ],
+      },
+      '4',
+    );
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ id: 'abc', kind: 'waivers', week: 3, adds: ['4697745'], drops: ['-16021'] });
+    // A zero bid is waiver order, not a bid worth showing.
+    expect(claims[0]).not.toHaveProperty('bid');
+    expect(claims[0]!.proposedAt).toMatch(/^20\d\d-/);
   });
 });

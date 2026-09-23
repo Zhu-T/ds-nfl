@@ -193,6 +193,37 @@ property also lies; the reliable read was the indicator's **computed background 
 as truth, fuzzy-match scraped DOM names onto it to backfill positions, then positionally zip
 leftover scraped names onto still-unnamed API picks ordered by overall pick.
 
+## 8b. Adds, drops and waiver claims (verified 2026-09-23)
+
+Same endpoint as the lineup write, `POST .../leagues/{id}/transactions/`, with the same two
+cookies. The envelope differs only in `type`:
+
+| Field | Value |
+| --- | --- |
+| `type` | `FREEAGENT` for an immediate add, `WAIVER` for a claim |
+| `bidAmount` | the FAAB bid, in leagues with a budget |
+| `items` | `{ playerId, type: 'ADD', toTeamId, toLineupSlotId }` and `{ playerId, type: 'DROP', fromTeamId, fromLineupSlotId }` |
+
+**Each item must name its team.** An ADD without `toTeamId` is rejected with HTTP 409 and
+`Required field toTeamId missing from ADD TransactionItem`. A lineup move needs no team,
+because the player is already yours — which is why the shape reconstructed from `LINEUP`
+items failed the first time it was sent for real.
+
+A `WAIVER` post returns 200 and the claim shows as `WAIVER`/`PENDING`, with the roster
+unchanged until the waiver run; ESPN rewrites the drop item's `fromLineupSlotId` to -1. So a
+claim cannot be confirmed by reading the roster back, only from the transaction list. A
+`FREEAGENT` post applies at once and can be read back.
+
+**Reading them back is not where you would expect.** `view=mPendingTransactions` answers
+with a `pendingTransactions` array only sometimes, and otherwise omits the key entirely —
+observed both ways within an hour on the same league. `view=mTransactions2` reliably returns
+every transaction with a `status`, so pending claims are read from there, filtered to
+`PENDING` and your own `teamId`. Other teams' claims are not disclosed.
+
+ESPN also leaves **stale** claims as `PENDING`: ones whose drop player has since gone, or
+whose add already landed. Anything acting on this list has to check it against the roster
+first; one real team had eight pending rows of which one was still possible.
+
 ## 9. Ancillary endpoints seen in traffic captures
 
 Observed in the draft-room network captures. Not currently used, but two are worth knowing.

@@ -11,6 +11,7 @@ import { openedRoleNote } from '@ds-nfl/core';
 import { TRENDING_MIN, type Trend } from '@/lib/league-data';
 import type { CeilingView } from '@/lib/upside';
 import { AddPlayerButton, type DropChoice } from '@/components/add-player-button';
+import { ProtectedPanel } from '@/components/protected-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,12 +101,25 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
       ? reach(b.player.gsisId) - reach(a.player.gsisId) || b.lineupGain - a.lineupGain
       : b.lineupGain - a.lineupGain || reach(b.player.gsisId) - reach(a.player.gsisId),
   );
+  // Players already in a pending claim: the app should not offer them again.
+  const claimedIn = new Map((data?.pending ?? []).flatMap((c) => c.adds.map((a) => [a.id, c] as const)));
+  const claimedOut = new Set((data?.pending ?? []).flatMap((c) => c.drops.map((d) => d.id)));
   const change = (id: string) => data?.trendById[id]?.change ?? 0;
   // Trending: the players managers across ESPN are adding most, whatever they add to your lineup. Likely streamers.
   const rising = (data?.candidates ?? [])
     .filter((c) => change(c.player.gsisId) >= TRENDING_MIN)
     .sort((a, b) => change(b.player.gsisId) - change(a.player.gsisId));
-  const drops: DropChoice[] = (data?.myRoster ?? []).map((p) => ({ id: p.id, name: p.name, position: p.position, locked: p.locked }));
+  // Protected players are left out of the drop list entirely, not just disabled.
+  const drops: DropChoice[] = (data?.myRoster ?? [])
+    .filter((p) => !p.protected && !claimedOut.has(p.id))
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      position: p.position,
+      locked: p.locked,
+      cost: data?.dropCostById[p.id] ?? 0,
+    }))
+    .sort((a, b) => a.cost - b.cost);
   const shown = byTrend
     ? rising.slice(0, 25)
     : ordered.length > 0
@@ -131,6 +145,23 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
               Ranked by what each player adds to your <em>starting lineup</em>, this week or {through}.
               Hover a note for details.
             </p>
+
+            {data.pending.length > 0 && (
+              <div className="notice">
+                <span className="notice__tag">Pending</span>
+                <span>
+                  {data.pending.map((c) => (
+                    <span key={c.id}>
+                      {c.kind === 'waivers' ? 'Waiver claim' : 'Add'} for week {c.week}:{' '}
+                      {c.adds.map((a) => a.name).join(', ') || 'nobody'} in
+                      {c.drops.length > 0 ? `, ${c.drops.map((d) => d.name).join(', ')} out` : ''}
+                      {c.bid !== undefined ? ` for $${c.bid}` : ''}. ESPN settles it at the next waiver run, and your
+                      roster below is unchanged until then.{' '}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )}
 
             {data.isFuture && (
               <div className="notice">
@@ -224,6 +255,7 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                         {pickupLabel(data.pickupById[c.player.gsisId])}
                         <Flags
                           items={[
+                            claimedIn.has(c.player.gsisId) && { text: 'claim pending', tone: 'news' },
                             trend && trend.change >= TRENDING_MIN && !byTrend && { text: trendLabel(trend), tone: 'news' },
                             picked.has(c.player.gsisId) && { text: 'web pick', tone: 'news' },
                             data.openings[c.player.gsisId] && {
@@ -244,13 +276,25 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                           ]}
                         />
                       </div>
-                      {data.pickupById[c.player.gsisId] && res.state === 'ok' && (
+                      {claimedIn.has(c.player.gsisId) ? (
+                        <div className="slot__actions">
+                          <span className="field__hint">Already claimed — waiting for the waiver run.</span>
+                        </div>
+                      ) : data.pickupById[c.player.gsisId] && res.state === 'ok' ? (
                         <div className="slot__actions">
                           <AddPlayerButton
                             leagueKey={res.key}
                             week={data.week}
-                            playerId={c.player.gsisId}
-                            playerName={c.player.name}
+                            player={{
+                              id: c.player.gsisId,
+                              name: c.player.name,
+                              position: c.player.position,
+                              proTeam: data.proTeamById[c.player.gsisId] ?? null,
+                              projected: c.player.projectedPoints,
+                              gain: c.lineupGain,
+                              horizonGain: later,
+                              displaces: c.displaces,
+                            }}
                             pickup={data.pickupById[c.player.gsisId]!}
                             drops={drops}
                             suggestedDropId={drop?.playerId ?? undefined}
@@ -258,9 +302,10 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                             suggestedBid={
                               data.faab ? suggestBid(data.faab.remaining, c.lineupGain, later) : undefined
                             }
+                            horizonLabel={through}
                           />
                         </div>
-                      )}
+                      ) : null}
                     </div>
                     <div className="slot__pts">
                       {byTrend && trend ? (
@@ -288,6 +333,10 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
             <div className="section__head">
               <h2 className="section__title">Look further</h2>
             </div>
+            {res.state === 'ok' && data.myRoster.length > 0 && (
+              <ProtectedPanel leagueKey={res.key} players={data.myRoster} />
+            )}
+
             {res.state === 'ok' && (
               <PlayerEvalPanel
                 leagueKey={res.key}

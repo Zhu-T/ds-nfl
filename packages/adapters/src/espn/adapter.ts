@@ -7,6 +7,7 @@ import {
   type LeagueReader,
   type LeagueRef,
   type Matchup,
+  type PendingClaim,
   type SeasonMatchup,
   type RosterPlayer,
   type TeamRoster,
@@ -422,6 +423,18 @@ export class EspnReader implements LeagueReader {
     }));
   }
 
+  /**
+   * Claims you have put in that ESPN has not settled. A waiver claim changes
+   * nothing until the waiver run, so it cannot be seen in the roster.
+   */
+  async getPendingClaims(ref: LeagueRef): Promise<PendingClaim[]> {
+    // Both views are asked for: `mPendingTransactions` sometimes answers with a
+    // `pendingTransactions` array and sometimes omits it entirely, while
+    // `mTransactions2` reliably lists every transaction with its status.
+    const data = await this.get(ref, ['mTransactions2', 'mPendingTransactions'], undefined, true);
+    return parsePendingClaims(data, ref.teamId);
+  }
+
   /** Every week's pairings, from the same schedule `getMatchup` reads. */
   async getSchedule(ref: LeagueRef): Promise<SeasonMatchup[]> {
     const data = await this.get(ref, ['mMatchupScore']);
@@ -614,6 +627,35 @@ export function playersFromKona(data: any, week: number, season: number): Roster
           ? { pickup: 'free-agent' as const }
           : {}),
       ...(entry.status === 'ONTEAM' && entry.onTeamId !== undefined ? { onTeamId: String(entry.onTeamId) } : {}),
+    });
+  }
+  return out;
+}
+
+/** Your unsettled claims, from either the pending list or the full transaction list. */
+export function parsePendingClaims(data: any, teamId: string): PendingClaim[] {
+  const out: PendingClaim[] = [];
+  const seen = new Set<string>();
+  const rows = [
+    ...((data?.pendingTransactions ?? []) as Record<string, any>[]),
+    ...((data?.transactions ?? []) as Record<string, any>[]),
+  ];
+  for (const t of rows) {
+    const mine = String(t?.teamId) === String(teamId);
+    const pending = String(t?.status ?? 'PENDING').toUpperCase() === 'PENDING';
+    if (!mine || !pending) continue;
+    const id = String(t.id ?? `${t.teamId}:${t.proposedDate ?? ''}`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const items = (t.items ?? []) as Record<string, any>[];
+    out.push({
+      id,
+      kind: String(t.type).toUpperCase() === 'WAIVER' ? 'waivers' : 'free-agent',
+      week: Number(t.scoringPeriodId ?? 0),
+      ...(typeof t.bidAmount === 'number' && t.bidAmount > 0 ? { bid: t.bidAmount } : {}),
+      proposedAt: typeof t.proposedDate === 'number' ? new Date(t.proposedDate).toISOString() : null,
+      adds: items.filter((i) => String(i?.type).toUpperCase() === 'ADD').map((i) => String(i.playerId)),
+      drops: items.filter((i) => String(i?.type).toUpperCase() === 'DROP').map((i) => String(i.playerId)),
     });
   }
   return out;

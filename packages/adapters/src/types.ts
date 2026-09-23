@@ -185,6 +185,24 @@ export interface TeamRoster {
   readonly players: readonly RosterPlayer[];
 }
 
+/**
+ * A claim you have put in that ESPN has not settled yet. Until the waiver run,
+ * the roster still reads as it was, so anything that asks "what will my team
+ * be" has to account for these separately.
+ */
+export interface PendingClaim {
+  readonly id: string;
+  /** "waivers" is a claim in the queue; "free-agent" is an add that has not applied yet. */
+  readonly kind: 'waivers' | 'free-agent';
+  readonly week: number;
+  /** The FAAB bid, in leagues with a budget. */
+  readonly bid?: number;
+  readonly proposedAt: string | null;
+  /** Platform player ids coming in and going out. */
+  readonly adds: readonly string[];
+  readonly drops: readonly string[];
+}
+
 export interface Matchup {
   readonly week: number;
   readonly myTeamName: string;

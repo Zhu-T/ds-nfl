@@ -10,6 +10,7 @@ import {
   describeError,
   leagueKey,
   readNewsReport,
+  protectedIds,
   readPlayerList,
   resolveLeague,
   type PlayerList,
@@ -107,6 +108,7 @@ export async function buildLeagueContext(
       playerListFor(key, week.league.week, waivers.state === 'ok' ? waivers.data : null),
     ]);
     const news = await newsForPlayers(roster.players);
+    const guarded = protectedIds(key);
     // Projections as the optimizer saw them, web news included.
     const adjusted = new Map(
       [...week.optimal.starters.flatMap((s) => (s.player ? [s.player] : [])), ...week.optimal.bench].map((p) => [
@@ -141,6 +143,7 @@ export async function buildLeagueContext(
         const adjustedPlayer = adjusted.get(p.platformPlayerId);
         const note = [
           p.unavailableReason,
+          guarded.has(p.platformPlayerId) ? 'protected: never suggest dropping them' : undefined,
           p.locked && !week.isFuture ? 'locked' : undefined,
           adjustedPlayer?.news ? `news check: ${adjustedPlayer.news.status}` : undefined,
           adjustedPlayer?.market ? `betting lines blended in, ESPN alone ${adjustedPlayer.market.espn.toFixed(1)}` : undefined,
@@ -212,6 +215,16 @@ export async function buildLeagueContext(
                 ...(note ? { note } : {}),
               };
             }),
+          }
+        : {}),
+      ...(waivers.state === 'ok' && waivers.data.pending.length > 0
+        ? {
+            pending: waivers.data.pending.map((c) => ({
+              kind: c.kind,
+              week: c.week,
+              adds: c.adds.map((a) => a.name),
+              drops: c.drops.map((d) => d.name),
+            })),
           }
         : {}),
       ...(waivers.state === 'ok' && waivers.data.ceiling
