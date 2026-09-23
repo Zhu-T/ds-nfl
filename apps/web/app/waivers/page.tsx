@@ -147,20 +147,11 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
             </p>
 
             {data.pending.length > 0 && (
-              <div className="notice">
-                <span className="notice__tag">Pending</span>
-                <span>
-                  {data.pending.map((c) => (
-                    <span key={c.id}>
-                      {c.kind === 'waivers' ? 'Waiver claim' : 'Add'} for week {c.week}:{' '}
-                      {c.adds.map((a) => a.name).join(', ') || 'nobody'} in
-                      {c.drops.length > 0 ? `, ${c.drops.map((d) => d.name).join(', ')} out` : ''}
-                      {c.bid !== undefined ? ` for $${c.bid}` : ''}. ESPN settles it at the next waiver run, and your
-                      roster below is unchanged until then.{' '}
-                    </span>
-                  ))}
-                </span>
-              </div>
+              <p className="adjust-note">
+                {data.pending.length === 1 ? '1 move is' : `${data.pending.length} moves are`} waiting to settle:{' '}
+                {data.pending.map((c) => `${c.adds.map((a) => a.name).join(', ') || 'nobody'} in${c.drops.length > 0 ? `, ${c.drops.map((d) => d.name).join(', ')} out` : ''}`).join('; ')}.{' '}
+                <Link href="/pending">See Pending</Link>
+              </p>
             )}
 
             {data.isFuture && (

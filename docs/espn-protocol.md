@@ -224,6 +224,13 @@ ESPN also leaves **stale** claims as `PENDING`: ones whose drop player has since
 whose add already landed. Anything acting on this list has to check it against the roster
 first; one real team had eight pending rows of which one was still possible.
 
+**Cancelling does not change the original row.** Cancelling a claim in ESPN's UI appends a
+second transaction, `WAIVER`/`CANCELED`, with the same players and its own id and timestamp,
+and leaves the first row saying `PENDING` for ever. Observed with a claim made at 17:23:18
+and cancelled at 17:24:27: both rows were still there afterwards. So "is this claim live?"
+is answered by checking whether any later settled row names the same swap, not by the row's
+own status. `livePendingMoves` in the adapters package does exactly that.
+
 ## 9. Ancillary endpoints seen in traffic captures
 
 Observed in the draft-room network captures. Not currently used, but two are worth knowing.

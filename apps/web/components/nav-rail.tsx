@@ -11,6 +11,7 @@ const THIS_WEEK = [
   { href: '/trades', label: 'Trades' },
   { href: '/players', label: 'Players' },
   { href: '/season', label: 'Coming weeks' },
+  { href: '/pending', label: 'Pending' },
 ];
 
 const LEAGUE = [

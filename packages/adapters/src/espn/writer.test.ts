@@ -115,10 +115,10 @@ describe('EspnWriter addDrop', () => {
   });
 });
 
-describe('parsePendingClaims', () => {
-  it('reads your unsettled claims, and ignores other teams and settled ones', async () => {
-    const { parsePendingClaims } = await import('./adapter.js');
-    const claims = parsePendingClaims(
+describe('parseTransactions', () => {
+  it('reads the log with every row and its status, and marks your own', async () => {
+    const { parseTransactions } = await import('./adapter.js');
+    const rows = parseTransactions(
       {
         pendingTransactions: [
           {
@@ -140,10 +140,13 @@ describe('parsePendingClaims', () => {
       },
       '4',
     );
-    expect(claims).toHaveLength(1);
-    expect(claims[0]).toMatchObject({ id: 'abc', kind: 'waivers', week: 3, adds: ['4697745'], drops: ['-16021'] });
+    expect(rows).toHaveLength(3);
+    const mine = rows.filter((r) => r.isMine);
+    expect(mine.map((r) => r.status)).toEqual(['pending', 'executed']);
+    expect(mine[0]).toMatchObject({ id: 'abc', kind: 'waivers', week: 3, adds: ['4697745'], drops: ['-16021'] });
     // A zero bid is waiver order, not a bid worth showing.
-    expect(claims[0]).not.toHaveProperty('bid');
-    expect(claims[0]!.proposedAt).toMatch(/^20\d\d-/);
+    expect(mine[0]).not.toHaveProperty('bid');
+    expect(mine[0]!.at).toMatch(/^20\d\d-/);
+    expect(rows.find((r) => r.id === 'other')!.isMine).toBe(false);
   });
 });

@@ -356,13 +356,21 @@ sides of the move before anything is written:
 
 Confirming writes through the same transactions endpoint lineups use.
 
-**Pending claims** are read back and shown at the top of the Waivers page: who is coming in,
-who is going out, and that nothing changes until the waiver run. A player you have already
-claimed is marked "claim pending" and cannot be claimed twice, and a player already on the
-way out is not offered as a drop. The League AI is told about them too. ESPN keeps stale
-claims in the list — ones that would drop a player you no longer have — so only claims that
-could still happen are shown. A claim is **not** assumed to succeed: projections, lineups
-and waiver value all still treat your roster as it is today.
+**Pending** is its own page: what you have put in and not yet had settled, when the waivers
+run in your league, and how your last few moves actually ended — went through, cancelled, or
+failed, with ESPN's reason. Waivers links to it, marks a player you have already claimed as
+"claim pending" so they cannot be claimed twice, and leaves a player already on the way out
+off the drop list. The League AI is told about them too.
+
+Working out what is really pending takes care, because ESPN's log is append-only:
+
+- Cancelling a claim **appends** a `CANCELED` row and leaves the original saying `PENDING`.
+- Claims whose drop player has since gone stay `PENDING` for ever.
+
+So a claim counts as live only when nothing later settled the same swap and the players still
+make sense against your roster; the rest are folded away as "ESPN still lists these but they
+cannot happen". A claim is **not** assumed to succeed either: projections, lineups and waiver
+value all still treat your roster as it is today.
 
 - Nothing is written without that confirmation, and the app never acts on its own.
 - The server checks everything again: that the player is still available, that the drop is

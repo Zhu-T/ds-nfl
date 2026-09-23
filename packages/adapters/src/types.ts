@@ -110,6 +110,8 @@ export interface LeagueInfo {
   readonly regularSeasonWeeks: number;
   /** The FAAB budget each team starts with; 0 when the league uses waiver order instead. */
   readonly faabBudget: number;
+  /** When the platform settles claims: the days it runs and the hour, in the league's own time. */
+  readonly waiverRun: { readonly days: readonly string[]; readonly hour: number } | null;
 }
 
 export interface FantasyTeam {
@@ -186,18 +188,23 @@ export interface TeamRoster {
 }
 
 /**
- * A claim you have put in that ESPN has not settled yet. Until the waiver run,
- * the roster still reads as it was, so anything that asks "what will my team
- * be" has to account for these separately.
+ * A move on the league's transaction log: yours or another team's, settled or
+ * not. A pending one changes nothing until the platform settles it, so anything
+ * asking "what will my team be" has to account for these separately.
  */
-export interface PendingClaim {
+export interface LeagueTransaction {
   readonly id: string;
-  /** "waivers" is a claim in the queue; "free-agent" is an add that has not applied yet. */
-  readonly kind: 'waivers' | 'free-agent';
+  readonly teamId: string;
+  readonly isMine: boolean;
+  /** "lineup" is a slot change; the rest move players between teams and the pool. */
+  readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
+  readonly status: 'pending' | 'executed' | 'canceled' | 'failed';
+  /** ESPN's reason when a claim failed, e.g. "INVALIDPLAYERSOURCE". */
+  readonly failure?: string;
   readonly week: number;
+  readonly at: string | null;
   /** The FAAB bid, in leagues with a budget. */
   readonly bid?: number;
-  readonly proposedAt: string | null;
   /** Platform player ids coming in and going out. */
   readonly adds: readonly string[];
   readonly drops: readonly string[];

@@ -16,4 +16,5 @@ export * from './espn/matchups.js';
 export * from './waiver-picks.js';
 export * from './player-lists.js';
 export * from './protected.js';
+export * from './transactions.js';
 export * from './results.js';

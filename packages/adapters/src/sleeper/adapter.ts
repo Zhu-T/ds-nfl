@@ -149,6 +149,7 @@ export class SleeperReader implements LeagueReader {
       playoffTeamCount: 0,
       regularSeasonWeeks: 14,
       faabBudget: 0,
+      waiverRun: null,
     };
   }
 

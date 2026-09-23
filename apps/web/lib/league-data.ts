@@ -35,6 +35,7 @@ import {
   leagueKey,
   readNewsReport,
   activeFindings,
+  livePendingMoves,
   protectedIds,
   readWebPicks,
   type WebPicksReport,
@@ -334,18 +335,18 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     const ceiling = plan ? await ceilingView(plan, pool, available) : null;
 
     // Claims already in the queue: the roster will not show them until the waiver run.
-    // ESPN keeps stale ones too — claims that would drop a player you no longer have, or
-    // add one you already got — so only those that could still happen are shown.
-    const claims = await reader.getPendingClaims(ref).catch(() => []);
+    // `livePendingMoves` drops the ones ESPN keeps listed but can no longer run.
+    const log = await reader.getTransactions(ref).catch(() => []);
     const onRoster = new Set(roster.players.map((p) => p.platformPlayerId));
-    const live = claims.filter(
-      (claim) => claim.drops.every((id) => onRoster.has(id)) && claim.adds.every((id) => !onRoster.has(id)),
+    const live = livePendingMoves(
+      log.filter((t) => t.isMine && (t.kind === 'waivers' || t.kind === 'free-agent')),
+      { onRoster },
     );
     const nameOf = (id: string) =>
       [...roster.players, ...available].find((p) => p.platformPlayerId === id)?.name ?? `Player ${id}`;
     const pending: PendingMove[] = live.map((claim) => ({
       id: claim.id,
-      kind: claim.kind,
+      kind: claim.kind as 'waivers' | 'free-agent',
       week: claim.week,
       ...(claim.bid !== undefined ? { bid: claim.bid } : {}),
       adds: claim.adds.map((id) => ({ id, name: nameOf(id) })),
@@ -1067,6 +1068,73 @@ export function loadSeason(key?: string | null, requestedWeek?: number | null): 
     const odds = await seasonOdds(reader, ref, league, week).catch(() => null);
     return { weeks, from: week, odds };
   });
+}
+
+export interface PendingRow {
+  readonly id: string;
+  readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
+  readonly status: 'pending' | 'executed' | 'canceled' | 'failed';
+  readonly failure?: string;
+  readonly week: number;
+  readonly at: string | null;
+  readonly bid?: number;
+  readonly adds: readonly string[];
+  readonly drops: readonly string[];
+  /** False when the claim can no longer happen: the drop has gone, or the add already landed. */
+  readonly live: boolean;
+}
+
+export interface PendingView {
+  readonly pending: readonly PendingRow[];
+  /** What has settled lately, newest first: how a claim actually ended. */
+  readonly settled: readonly PendingRow[];
+  /** When ESPN settles claims, from the league's own settings. */
+  readonly waiverRun: { readonly days: readonly string[]; readonly hour: number } | null;
+  /** When this page read ESPN. */
+  readonly readAt: string;
+}
+
+/** Moves waiting to happen, and the ones that have just settled. */
+export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
+  return load(key, async (reader, ref, league) => {
+    const [log, roster] = await Promise.all([reader.getTransactions(ref), reader.getRoster(ref, league.currentWeek)]);
+    const mine = log.filter((t) => t.isMine && t.kind !== 'lineup');
+
+    // Names for every player named in the rows shown.
+    const shown = [...mine.filter((t) => t.status === 'pending'), ...settledFirst(mine).slice(0, 8)];
+    const ids = [...new Set(shown.flatMap((t) => [...t.adds, ...t.drops]))];
+    const known = new Map(roster.players.map((p) => [p.platformPlayerId, p.name]));
+    const missing = ids.filter((id) => !known.has(id));
+    for (const p of missing.length > 0 ? await reader.getPlayersByIds(ref, league.currentWeek, missing).catch(() => []) : []) {
+      known.set(p.platformPlayerId, p.name);
+    }
+    const onRoster = new Set(roster.players.map((p) => p.platformPlayerId));
+    const liveIds = new Set(livePendingMoves(mine, { onRoster }).map((t) => t.id));
+    const row = (t: (typeof mine)[number]): PendingRow => ({
+      id: t.id,
+      kind: t.kind,
+      status: t.status,
+      ...(t.failure ? { failure: t.failure } : {}),
+      week: t.week,
+      at: t.at,
+      ...(t.bid !== undefined ? { bid: t.bid } : {}),
+      adds: t.adds.map((id) => known.get(id) ?? `Player ${id}`),
+      drops: t.drops.map((id) => known.get(id) ?? `Player ${id}`),
+      live: liveIds.has(t.id),
+    });
+
+    return {
+      pending: mine.filter((t) => t.status === 'pending').map(row),
+      settled: settledFirst(mine).slice(0, 8).map(row),
+      waiverRun: league.waiverRun,
+      readAt: new Date().toISOString(),
+    };
+  });
+}
+
+/** Settled rows, newest first. */
+function settledFirst<T extends { status: string; at: string | null }>(rows: readonly T[]): T[] {
+  return rows.filter((t) => t.status !== 'pending').sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''));
 }
 
 export interface ReviewView {

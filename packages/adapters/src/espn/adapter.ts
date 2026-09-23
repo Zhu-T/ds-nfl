@@ -7,7 +7,7 @@ import {
   type LeagueReader,
   type LeagueRef,
   type Matchup,
-  type PendingClaim,
+  type LeagueTransaction,
   type SeasonMatchup,
   type RosterPlayer,
   type TeamRoster,
@@ -373,6 +373,12 @@ export class EspnReader implements LeagueReader {
       faabBudget: settings.acquisitionSettings?.isUsingAcquisitionBudget
         ? Number(settings.acquisitionSettings?.acquisitionBudget ?? 0)
         : 0,
+      waiverRun: Array.isArray(settings.acquisitionSettings?.waiverProcessDays)
+        ? {
+            days: settings.acquisitionSettings.waiverProcessDays as string[],
+            hour: Number(settings.acquisitionSettings?.waiverProcessHour ?? 0),
+          }
+        : null,
     };
   }
 
@@ -424,15 +430,16 @@ export class EspnReader implements LeagueReader {
   }
 
   /**
-   * Claims you have put in that ESPN has not settled. A waiver claim changes
-   * nothing until the waiver run, so it cannot be seen in the roster.
+   * The league's transaction log: every add, drop, claim and trade, settled or
+   * not. A pending claim changes nothing until the waiver run, so it cannot be
+   * seen in the roster; see `livePendingMoves` for which ones can still happen.
    */
-  async getPendingClaims(ref: LeagueRef): Promise<PendingClaim[]> {
+  async getTransactions(ref: LeagueRef): Promise<LeagueTransaction[]> {
     // Both views are asked for: `mPendingTransactions` sometimes answers with a
     // `pendingTransactions` array and sometimes omits it entirely, while
     // `mTransactions2` reliably lists every transaction with its status.
     const data = await this.get(ref, ['mTransactions2', 'mPendingTransactions'], undefined, true);
-    return parsePendingClaims(data, ref.teamId);
+    return parseTransactions(data, ref.teamId);
   }
 
   /** Every week's pairings, from the same schedule `getMatchup` reads. */
@@ -632,28 +639,46 @@ export function playersFromKona(data: any, week: number, season: number): Roster
   return out;
 }
 
-/** Your unsettled claims, from either the pending list or the full transaction list. */
-export function parsePendingClaims(data: any, teamId: string): PendingClaim[] {
-  const out: PendingClaim[] = [];
+/**
+ * The transaction log, from the pending list and the full list together: the
+ * pending view answers with its array only sometimes, while the transaction
+ * list always carries every row with a status. Rows are merged by id.
+ */
+export function parseTransactions(data: any, teamId: string): LeagueTransaction[] {
+  const out: LeagueTransaction[] = [];
   const seen = new Set<string>();
   const rows = [
     ...((data?.pendingTransactions ?? []) as Record<string, any>[]),
     ...((data?.transactions ?? []) as Record<string, any>[]),
   ];
   for (const t of rows) {
-    const mine = String(t?.teamId) === String(teamId);
-    const pending = String(t?.status ?? 'PENDING').toUpperCase() === 'PENDING';
-    if (!mine || !pending) continue;
-    const id = String(t.id ?? `${t.teamId}:${t.proposedDate ?? ''}`);
+    const id = String(t?.id ?? `${t?.teamId}:${t?.proposedDate ?? ''}`);
     if (seen.has(id)) continue;
     seen.add(id);
-    const items = (t.items ?? []) as Record<string, any>[];
+    const status = String(t?.status ?? '').toUpperCase();
+    const type = String(t?.type ?? '').toUpperCase();
+    const items = (t?.items ?? []) as Record<string, any>[];
     out.push({
       id,
-      kind: String(t.type).toUpperCase() === 'WAIVER' ? 'waivers' : 'free-agent',
-      week: Number(t.scoringPeriodId ?? 0),
-      ...(typeof t.bidAmount === 'number' && t.bidAmount > 0 ? { bid: t.bidAmount } : {}),
-      proposedAt: typeof t.proposedDate === 'number' ? new Date(t.proposedDate).toISOString() : null,
+      teamId: String(t?.teamId),
+      isMine: String(t?.teamId) === String(teamId),
+      kind:
+        type === 'WAIVER'
+          ? 'waivers'
+          : type === 'FREEAGENT'
+            ? 'free-agent'
+            : type.includes('TRADE')
+              ? 'trade'
+              : type === 'ROSTER'
+                ? 'lineup'
+                : 'other',
+      status:
+        status === 'PENDING' ? 'pending' : status === 'EXECUTED' ? 'executed' : status === 'CANCELED' ? 'canceled' : 'failed',
+      // e.g. FAILED_INVALIDPLAYERSOURCE, when another team's claim took the player first.
+      ...(status.startsWith('FAILED_') ? { failure: status.slice('FAILED_'.length) } : {}),
+      week: Number(t?.scoringPeriodId ?? 0),
+      at: typeof t?.proposedDate === 'number' ? new Date(t.proposedDate).toISOString() : null,
+      ...(typeof t?.bidAmount === 'number' && t.bidAmount > 0 ? { bid: t.bidAmount } : {}),
       adds: items.filter((i) => String(i?.type).toUpperCase() === 'ADD').map((i) => String(i.playerId)),
       drops: items.filter((i) => String(i?.type).toUpperCase() === 'DROP').map((i) => String(i.playerId)),
     });
