@@ -208,9 +208,20 @@ export async function buildLeagueContext(
                 pickup: p.pickup,
                 gain: p.gain,
                 ...(p.horizonGain > 0 ? { horizonGain: p.horizonGain } : {}),
+                ...(p.rosteredChange !== null ? { rosteredChange: p.rosteredChange } : {}),
                 ...(note ? { note } : {}),
               };
             }),
+          }
+        : {}),
+      ...(waivers.state === 'ok' && waivers.data.ceiling
+        ? {
+            upside: {
+              opponent: waivers.data.ceiling.opponentName,
+              margin: waivers.data.ceiling.margin,
+              chance: waivers.data.ceiling.chance,
+              picks: waivers.data.ceiling.rows.slice(0, 3).map((r) => ({ name: r.name, position: r.position, ceiling: r.ceiling, after: r.after })),
+            },
           }
         : {}),
       ...(waivers.state === 'ok' && waivers.data.horizonWeeks.length > 1

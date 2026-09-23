@@ -185,3 +185,49 @@ async function load(
     fetchedAt: new Date().toISOString(),
   };
 }
+
+// ------------------------------------------------------------ game status --
+
+/** Where each NFL team's game stands this week, by team abbreviation. */
+export type GameStatus = 'upcoming' | 'live' | 'final';
+
+/** Each team's game state from the scoreboard; teams on bye are absent. Postponed games count as upcoming. */
+export function parseGameStatus(data: unknown): Map<string, GameStatus> {
+  const out = new Map<string, GameStatus>();
+  for (const event of ((data as { events?: unknown[] })?.events ?? []) as Record<string, any>[]) {
+    const state = event?.status?.type?.state ?? event?.competitions?.[0]?.status?.type?.state;
+    const status: GameStatus = state === 'post' ? 'final' : state === 'in' ? 'live' : 'upcoming';
+    for (const c of (event?.competitions?.[0]?.competitors ?? []) as Record<string, any>[]) {
+      const team = c?.team?.abbreviation;
+      if (typeof team === 'string') out.set(team, status);
+    }
+  }
+  return out;
+}
+
+/** Games move on quickly while they are played, so this is cached only briefly. */
+const STATUS_TTL_MS = 2 * 60 * 1000;
+const statusCache = new Map<string, { at: number; status: Promise<Map<string, GameStatus>> }>();
+
+/** Each team's game state for a week, from ESPN's public scoreboard. */
+export function fetchGameStatus(
+  season: number,
+  week: number,
+  opts: { fetchImpl?: typeof fetch | undefined; now?: number } = {},
+): Promise<Map<string, GameStatus>> {
+  const key = `${season}:${week}`;
+  const now = opts.now ?? Date.now();
+  const hit = statusCache.get(key);
+  if (hit && now - hit.at < STATUS_TTL_MS) return hit.status;
+  const status = (async () => {
+    const res = await (opts.fetchImpl ?? fetch)(`${SCOREBOARD}?seasontype=2&week=${week}&dates=${season}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`ESPN scoreboard returned HTTP ${res.status}`);
+    return parseGameStatus(await res.json());
+  })();
+  status.catch(() => statusCache.delete(key));
+  statusCache.set(key, { at: now, status });
+  return status;
+}

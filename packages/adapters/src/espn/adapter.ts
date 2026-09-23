@@ -7,6 +7,7 @@ import {
   type LeagueReader,
   type LeagueRef,
   type Matchup,
+  type SeasonMatchup,
   type RosterPlayer,
   type TeamRoster,
 } from '../types.js';
@@ -18,7 +19,7 @@ import {
   slotFromId,
 } from './ids.js';
 import { parseEspnScoring, pprLabelFromRules, type EspnScoringItem } from './scoring.js';
-import { parsePositionalRatings, parseProSchedule, type PositionRatings, type ProSchedule } from './matchups.js';
+import { parseProSchedule, type ProSchedule } from './matchups.js';
 
 const READ_HOST = 'https://lm-api-reads.fantasy.espn.com';
 
@@ -187,12 +188,12 @@ export class EspnReader implements LeagueReader {
     return res.json();
   }
 
-  /** Players available to add, richest first by ownership. */
+  /** Players available to add: most rostered first, best projected for the week, or most added lately (ESPN's rostered +/-). */
   async getFreeAgents(
     ref: LeagueRef,
     week: number,
     limit = 150,
-    sortBy: 'owned' | 'projected' = 'owned',
+    sortBy: 'owned' | 'projected' | 'trending' = 'owned',
   ): Promise<RosterPlayer[]> {
     const filter = {
       players: {
@@ -202,7 +203,9 @@ export class EspnReader implements LeagueReader {
         // (projection), split 1 (one week), then season and week, e.g. "1120263".
         ...(sortBy === 'projected'
           ? { sortAppliedStatTotal: { sortAsc: false, sortPriority: 1, value: `11${ref.season}${week}` } }
-          : { sortPercOwned: { sortAsc: false, sortPriority: 1 } }),
+          : sortBy === 'trending'
+            ? { sortPercChanged: { sortAsc: false, sortPriority: 1 } }
+            : { sortPercOwned: { sortAsc: false, sortPriority: 1 } }),
       },
     };
     const data = await this.getFiltered(ref, 'kona_player_info', filter, week);
@@ -216,20 +219,23 @@ export class EspnReader implements LeagueReader {
    * Ownership alone misses low-owned players with a real role that week. In
    * week 3 of 2026 a 15-point QB, seven kickers, and a defense sat outside the
    * top 120 by ownership, while 15 players inside it were projected for nothing.
-   * The most-rostered are kept so popular stashes are still weighed.
+   * The most-rostered are kept so popular stashes are still weighed, and the
+   * most added lately so a streamer is weighed before ESPN's projection for
+   * them catches up.
    */
   async getFreeAgentPool(
     ref: LeagueRef,
     week: number,
-    opts: { byProjection?: number; byOwnership?: number } = {},
+    opts: { byProjection?: number; byOwnership?: number; byTrend?: number } = {},
   ): Promise<RosterPlayer[]> {
-    const [projected, owned] = await Promise.all([
+    const [projected, owned, trending] = await Promise.all([
       this.getFreeAgents(ref, week, opts.byProjection ?? 150, 'projected'),
       this.getFreeAgents(ref, week, opts.byOwnership ?? 50, 'owned'),
+      this.getFreeAgents(ref, week, opts.byTrend ?? 40, 'trending'),
     ]);
     const seen = new Set<string>();
     const pool: RosterPlayer[] = [];
-    for (const p of [...projected, ...owned]) {
+    for (const p of [...projected, ...owned, ...trending]) {
       if (seen.has(p.platformPlayerId)) continue;
       seen.add(p.platformPlayerId);
       pool.push(p);
@@ -261,9 +267,14 @@ export class EspnReader implements LeagueReader {
     return this.fromKona(data, week, ref.season);
   }
 
-  /** Points each NFL defense allows to each position this season, under this league's scoring. */
-  async getPositionalRatings(ref: LeagueRef, week: number): Promise<Map<Position, PositionRatings>> {
-    return parsePositionalRatings(await this.get(ref, ['mPositionalRatings'], week));
+  /**
+   * Every NFL D/ST for one week, with its actual points (once played) and ESPN's
+   * projection, under this league's scoring. One call, about 330 KB.
+   */
+  async getDefenseWeek(ref: LeagueRef, week: number): Promise<RosterPlayer[]> {
+    const filter = { players: { filterSlotIds: { value: [16] }, limit: 40, sortPercOwned: { sortAsc: false, sortPriority: 1 } } };
+    const data = await this.getFiltered(ref, 'kona_player_info', filter, week);
+    return this.fromKona(data, week, ref.season);
   }
 
   /** Who plays whom each week of the season. */
@@ -279,36 +290,7 @@ export class EspnReader implements LeagueReader {
 
   /** Players from a kona_player_info response, as roster players with their league status. */
   private fromKona(data: any, week: number, season: number): RosterPlayer[] {
-
-    const out: RosterPlayer[] = [];
-    for (const entry of (data.players ?? []) as Record<string, any>[]) {
-      const p = entry.player;
-      const position = positionFromId(p?.defaultPositionId);
-      if (!p || !position) continue;
-      const injury = availabilityFromInjury(p.injuryStatus);
-      out.push({
-        platformPlayerId: String(p.id),
-        name: String(p.fullName ?? 'Unknown'),
-        position,
-        eligibleSlots: ((p.eligibleSlots ?? []) as number[])
-          .map(slotFromId)
-          .filter((x): x is LineupSlot => x !== null),
-        currentSlot: 'BENCH',
-        projectedPoints: weeklyProjection(p.stats, week), ...projectionDetail(p.stats, week, p.defaultPositionId),
-        available: injury.available,
-        ...(injury.reason ? { unavailableReason: injury.reason } : {}),
-        proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
-        locked: Boolean(entry.lineupLocked),
-        ...(entry.status === 'WAIVERS'
-          ? { pickup: 'waivers' as const }
-          : entry.status === 'FREEAGENT'
-            ? { pickup: 'free-agent' as const }
-            : {}),
-        ...(entry.status === 'ONTEAM' && entry.onTeamId !== undefined ? { onTeamId: String(entry.onTeamId) } : {}),
-      });
-    }
-    return out;
+    return playersFromKona(data, week, season);
   }
 
   /** Every team's roster, for trade evaluation. */
@@ -336,7 +318,7 @@ export class EspnReader implements LeagueReader {
           available: injury.available && currentSlot !== 'IR',
           ...(injury.reason ? { unavailableReason: injury.reason } : {}),
           proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-          ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
+          ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...(typeof p.ownership?.percentChange === 'number' ? { percentChange: Math.round(p.ownership.percentChange * 100) / 100 } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
           locked: Boolean(entry.playerPoolEntry?.lineupLocked),
         });
       }
@@ -385,6 +367,11 @@ export class EspnReader implements LeagueReader {
       scoringRaw: settings.scoringSettings,
       currentWeek: Number((data['scoringPeriodId'] as number) ?? 1),
       finalWeek: Number((data['status'] as Record<string, unknown> | undefined)?.['finalScoringPeriod'] ?? 17),
+      playoffTeamCount: Number(settings.scheduleSettings?.playoffTeamCount ?? 0),
+      regularSeasonWeeks: Number(settings.scheduleSettings?.matchupPeriodCount ?? 14),
+      faabBudget: settings.acquisitionSettings?.isUsingAcquisitionBudget
+        ? Number(settings.acquisitionSettings?.acquisitionBudget ?? 0)
+        : 0,
     };
   }
 
@@ -429,7 +416,23 @@ export class EspnReader implements LeagueReader {
       isMine: String(t.id) === String(ref.teamId),
       wins: t.record?.overall?.wins,
       losses: t.record?.overall?.losses,
+      ties: t.record?.overall?.ties,
+      pointsFor: t.record?.overall?.pointsFor,
+      faabSpent: t.transactionCounter?.acquisitionBudgetSpent,
     }));
+  }
+
+  /** Every week's pairings, from the same schedule `getMatchup` reads. */
+  async getSchedule(ref: LeagueRef): Promise<SeasonMatchup[]> {
+    const data = await this.get(ref, ['mMatchupScore']);
+    return ((data['schedule'] ?? []) as Record<string, any>[]).flatMap((m) => {
+      const week = Number(m?.matchupPeriodId);
+      const homeTeamId = m?.home?.teamId;
+      const awayTeamId = m?.away?.teamId;
+      return Number.isInteger(week) && homeTeamId !== undefined && awayTeamId !== undefined
+        ? [{ week, homeTeamId: String(homeTeamId), awayTeamId: String(awayTeamId) }]
+        : [];
+    });
   }
 
   async getRoster(ref: LeagueRef, week: number, opts: { fresh?: boolean } = {}): Promise<TeamRoster> {
@@ -476,7 +479,7 @@ export class EspnReader implements LeagueReader {
         available: injury.available && currentSlot !== 'IR',
         ...(injury.reason ? { unavailableReason: injury.reason } : {}),
         proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
-        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
+        ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...(typeof p.ownership?.percentChange === 'number' ? { percentChange: Math.round(p.ownership.percentChange * 100) / 100 } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
       });
     }
 
@@ -581,4 +584,37 @@ function teamName(t: Record<string, any>): string {
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
   const combined = [t.location, t.nickname].filter(Boolean).join(' ').trim();
   return combined || `Team ${t.id}`;
+}
+
+/** Players from a kona_player_info response, as roster players with their league status. Also reads ESPN's public, league-free responses. */
+export function playersFromKona(data: any, week: number, season: number): RosterPlayer[] {
+  const out: RosterPlayer[] = [];
+  for (const entry of (data.players ?? []) as Record<string, any>[]) {
+    const p = entry.player;
+    const position = positionFromId(p?.defaultPositionId);
+    if (!p || !position) continue;
+    const injury = availabilityFromInjury(p.injuryStatus);
+    out.push({
+      platformPlayerId: String(p.id),
+      name: String(p.fullName ?? 'Unknown'),
+      position,
+      eligibleSlots: ((p.eligibleSlots ?? []) as number[])
+        .map(slotFromId)
+        .filter((x): x is LineupSlot => x !== null),
+      currentSlot: 'BENCH',
+      projectedPoints: weeklyProjection(p.stats, week), ...projectionDetail(p.stats, week, p.defaultPositionId),
+      available: injury.available,
+      ...(injury.reason ? { unavailableReason: injury.reason } : {}),
+      proTeam: PRO_TEAM_BY_ID[p.proTeamId as number] ?? null,
+      ...(typeof p.lastNewsDate === 'number' ? { lastNewsAt: p.lastNewsDate } : {}), ...(typeof p.ownership?.percentOwned === 'number' ? { percentOwned: p.ownership.percentOwned } : {}), ...(typeof p.ownership?.percentChange === 'number' ? { percentChange: Math.round(p.ownership.percentChange * 100) / 100 } : {}), ...seasonForm(p.stats, season), ...restOfSeason(p.stats, season), ...weekActual(p.stats, week),
+      locked: Boolean(entry.lineupLocked),
+      ...(entry.status === 'WAIVERS'
+        ? { pickup: 'waivers' as const }
+        : entry.status === 'FREEAGENT'
+          ? { pickup: 'free-agent' as const }
+          : {}),
+      ...(entry.status === 'ONTEAM' && entry.onTeamId !== undefined ? { onTeamId: String(entry.onTeamId) } : {}),
+    });
+  }
+  return out;
 }

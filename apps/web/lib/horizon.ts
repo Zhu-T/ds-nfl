@@ -20,8 +20,9 @@ export async function horizonFor(
   league: LeagueInfo,
   week: number,
   players: readonly RosterPlayer[],
+  weekCount: number = HORIZON_WEEKS,
 ): Promise<Horizon> {
-  const last = Math.max(week, Math.min(league.finalWeek, week + HORIZON_WEEKS - 1));
+  const last = Math.max(week, Math.min(league.finalWeek, week + weekCount - 1));
   const weeks = Array.from({ length: last - week + 1 }, (_, i) => week + i);
   const schedule = await reader.getProSchedule(ref).catch(() => null);
   const outlooks = new Map<string, Outlook>();

@@ -15,3 +15,6 @@ export const MATCHUP_COOKIE = 'ds-matchups';
 
 /** "off" leaves a player's own scoring this season out of projections; on by default. */
 export const FORM_COOKIE = 'ds-form';
+
+/** "on" shows the upside lineup (the one with the best chance of winning) on the Lineup page; off by default. */
+export const UPSIDE_COOKIE = 'ds-upside';

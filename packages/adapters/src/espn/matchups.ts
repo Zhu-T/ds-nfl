@@ -1,25 +1,13 @@
 /**
- * NFL matchups from ESPN: the fantasy points each defense allows to each
- * position (`view=mPositionalRatings`, per league), and the pro schedule, who
- * plays whom each week (`view=proTeamSchedules_wl`, per season).
+ * The NFL schedule from ESPN: who plays whom each week
+ * (`view=proTeamSchedules_wl`, per season). Opponent strength itself is
+ * measured from players' weekly actual and projected points; see
+ * packages/core/src/matchup/adjust.ts.
  */
 
-import type { Position } from '@ds-nfl/core';
-import { PRO_TEAM_BY_ID, positionFromId } from './ids.js';
-
-export interface DefenseRating {
-  /** Fantasy points per game allowed to the position. */
-  readonly allowed: number;
-  /** 1 allows the fewest, 32 the most. */
-  readonly rank: number;
-}
-
-export interface PositionRatings {
-  /** The average across the league. */
-  readonly average: number;
-  /** By the defense's team abbreviation. */
-  readonly byOpponent: ReadonlyMap<string, DefenseRating>;
-}
+import type { OpponentGame } from '@ds-nfl/core';
+import { PRO_TEAM_BY_ID } from './ids.js';
+import type { RosterPlayer } from '../types.js';
 
 export interface ProGame {
   readonly opponent: string;
@@ -32,27 +20,6 @@ export interface ProSchedule {
 }
 
 const num = (x: unknown): number => (typeof x === 'number' ? x : Number(x));
-
-export function parsePositionalRatings(data: unknown): Map<Position, PositionRatings> {
-  const out = new Map<Position, PositionRatings>();
-  const ratings = (data as { positionAgainstOpponent?: { positionalRatings?: Record<string, unknown> } } | null)
-    ?.positionAgainstOpponent?.positionalRatings;
-  for (const [positionId, raw] of Object.entries(ratings ?? {})) {
-    const entry = raw as { average?: unknown; ratingsByOpponent?: Record<string, { average?: unknown; rank?: unknown }> };
-    const position = positionFromId(Number(positionId));
-    const average = num(entry?.average);
-    if (!position || !Number.isFinite(average)) continue;
-    const byOpponent = new Map<string, DefenseRating>();
-    for (const [teamId, r] of Object.entries(entry.ratingsByOpponent ?? {})) {
-      const team = PRO_TEAM_BY_ID[Number(teamId)];
-      const allowed = num(r?.average);
-      const rank = num(r?.rank);
-      if (team && team !== 'FA' && Number.isFinite(allowed) && Number.isFinite(rank)) byOpponent.set(team, { allowed, rank });
-    }
-    out.set(position, { average, byOpponent });
-  }
-  return out;
-}
 
 export function parseProSchedule(data: unknown): ProSchedule {
   const weeks = new Map<number, Map<string, ProGame>>();
@@ -81,4 +48,20 @@ export function gamesBefore(schedule: ProSchedule, team: string, week: number): 
   let games = 0;
   for (const [w, teams] of schedule.weeks) if (w < week && teams.has(team)) games++;
   return games;
+}
+
+/**
+ * Players' finished games as the opponent model reads them: whom each faced,
+ * and what they scored and were projected that week. Players on bye, or
+ * without a score yet, are left out.
+ */
+export function opponentGames(schedule: ProSchedule, weeks: ReadonlyMap<number, readonly RosterPlayer[]>): OpponentGame[] {
+  return [...weeks].flatMap(([week, players]) =>
+    players.flatMap((p) => {
+      const game = p.proTeam ? schedule.weeks.get(week)?.get(p.proTeam) : undefined;
+      return game && p.actualPoints !== undefined
+        ? [{ week, position: p.position, opponent: game.opponent, actual: p.actualPoints, projected: p.projectedPoints }]
+        : [];
+    }),
+  );
 }

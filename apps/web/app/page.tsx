@@ -5,12 +5,10 @@ import { Suspense } from 'react';
 import { RosterNews } from '@/components/roster-news';
 import { ExplainPanel } from './explain-panel';
 import { WebNewsPanel } from '@/components/web-news-panel';
-import { OddsBar } from '@/components/odds-bar';
-import { MatchupBar } from '@/components/matchup-bar';
-import { FormBar } from '@/components/form-bar';
-import { formLabel } from '@/lib/form-label';
-import { matchupLabel } from '@/lib/matchup-label';
-import { marketLabel } from '@/lib/market-label';
+import { AdjustBar } from '@/components/adjust-bar';
+import { UpsidePanel } from '@/components/upside-panel';
+import { Flags, type Flag } from '@/components/flags';
+import { formShort, gameShort, marketShort, matchupShort } from '@/lib/short-labels';
 import { openedRoleNote } from '@ds-nfl/core';
 import type { GameLine } from '@/lib/week';
 import { aiStatus } from '@/lib/ai';
@@ -52,13 +50,25 @@ function newsLabel(p: OptimizerPlayer): string {
   return `news: ${p.news.status}, ${pts(p.news.from)} → ${pts(p.projectedPoints)}`;
 }
 
-/** "LAR vs SF, team total 24.5" from the game lines. */
-function gameLabel(g: GameLine | undefined): string {
-  return g ? `${g.team} ${g.home ? 'vs' : '@'} ${g.opponent}, team total ${pts(g.impliedPoints)}` : '';
+/**
+ * A player's notes on a row: news, betting lines, opponent, form, a teammate's
+ * injury, the game, and why they cannot play. Short, with the full wording on hover.
+ */
+function playerFlags(p: OptimizerPlayer, opening: string | undefined, game: GameLine | undefined): (Flag | null)[] {
+  const matchup = matchupShort(p.matchup, p.position);
+  return [
+    newsLabel(p) ? { text: newsLabel(p), tone: 'news' } : null,
+    marketShort(p) && { ...marketShort(p)!, tone: 'market' },
+    // The opponent is named once: by the D/ST adjustment when there is one, else by the game line.
+    matchup ? { ...matchup, tone: 'game' } : gameShort(game) && { ...gameShort(game)!, tone: 'game' },
+    formShort(p.form) && { ...formShort(p.form)!, tone: 'market' },
+    opening ? { text: 'role may grow', title: opening, tone: 'news' } : null,
+    p.unavailableReason ? { text: p.unavailableReason } : null,
+  ];
 }
 
 export default async function LineupPage() {
-  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, lastResult, games } =
+  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, lastResult, upside, games } =
     await loadWeek();
   const ai = aiStatus();
   const everyone = [...optimal.starters.flatMap((s) => (s.player ? [s.player] : [])), ...optimal.bench];
@@ -207,41 +217,29 @@ export default async function LineupPage() {
 
       {!isSample && lastResult && (
         <p className="adjust-note">
-          Week {lastResult.week} as played: your lineup scored {pts(lastResult.set)}; the{' '}
-          {lastResult.recommendedFrom === 'app' ? 'recommended lineup' : "best lineup by ESPN's projections"} would have
-          scored {pts(lastResult.recommended)}; the best possible was {pts(lastResult.best)}.
+          Week {lastResult.week} as played: you scored {pts(lastResult.set)} ·{' '}
+          {lastResult.recommendedFrom === 'app' ? 'recommended' : "ESPN's best projected"} {pts(lastResult.recommended)} · best
+          possible {pts(lastResult.best)}
         </p>
       )}
 
       {!isSample && (
-        <OddsBar
-          enabled={odds.enabled}
-          available={odds.available}
-          provider={odds.provider}
-          error={odds.error}
-          blended={blendedCount}
+        <AdjustBar
+          odds={{ enabled: odds.enabled, available: odds.available, provider: odds.provider, error: odds.error, blended: blendedCount }}
+          matchups={{
+            enabled: matchups.enabled,
+            available: matchups.available,
+            error: matchups.error,
+            adjusted: everyone.filter((p) => p.matchup && p.matchup.factor !== 1).length,
+          }}
+          form={{ enabled: form.enabled, adjusted: everyone.filter((p) => p.form && p.form.factor !== 1).length }}
           players={everyone.length}
           week={league.week}
         />
       )}
 
       {!isSample && (
-        <MatchupBar
-          enabled={matchups.enabled}
-          available={matchups.available}
-          error={matchups.error}
-          adjusted={everyone.filter((p) => p.matchup && p.matchup.factor !== 1).length}
-          players={everyone.length}
-          week={league.week}
-        />
-      )}
-
-      {!isSample && (
-        <FormBar
-          enabled={form.enabled}
-          adjusted={everyone.filter((p) => p.form && p.form.factor !== 1).length}
-          players={everyone.length}
-        />
+        <UpsidePanel enabled={upside.enabled} view={upside.view} leagueKey={leagueKey} week={league.week} disabled={allLocked} />
       )}
 
       <section className="section">
@@ -284,10 +282,13 @@ export default async function LineupPage() {
                       <span className="swap__who">{s.player.name}</span>
                       <span className="swap__pts">
                         {s.player.position} · {pts(s.player.projectedPoints)} proj
-                        {newsLabel(s.player) ? ` · ${newsLabel(s.player)}` : ''}
-                        {marketLabel(s.player) ? ` · ${marketLabel(s.player)}` : ''}
-                        {s.player.matchup ? ` · ${matchupLabel(s.player.matchup, s.player.position)}` : ''}
-                        {s.player.form ? ` · ${formLabel(s.player.form)}` : ''}
+                        <Flags
+                          items={playerFlags(
+                            s.player,
+                            openings[s.player.gsisId] ? openedRoleNote(openings[s.player.gsisId]!, s.player.position) : undefined,
+                            games[s.player.gsisId],
+                          )}
+                        />
                       </span>
                     </div>
                   </div>
@@ -296,22 +297,13 @@ export default async function LineupPage() {
                     <div className="slot__name">{s.player.name}</div>
                     <div className="slot__sub">
                       {s.player.position}
-                      {newsLabel(s.player) ? <span className="flag flag--news"> · {newsLabel(s.player)}</span> : null}
-                      {marketLabel(s.player) ? <span className="flag flag--market"> · {marketLabel(s.player)}</span> : null}
-                      {s.player.matchup ? (
-                        <span className="flag flag--game"> · {matchupLabel(s.player.matchup, s.player.position)}</span>
-                      ) : null}
-                      {s.player.form ? <span className="flag flag--market"> · {formLabel(s.player.form)}</span> : null}
-                      {openings[s.player.gsisId] ? (
-                        <span className="flag flag--news">
-                          {' '}
-                          · role may grow: {openedRoleNote(openings[s.player.gsisId]!, s.player.position)}
-                        </span>
-                      ) : null}
-                      {gameLabel(games[s.player.gsisId]) ? <span className="flag flag--game"> · {gameLabel(games[s.player.gsisId])}</span> : null}
-                      {s.player.unavailableReason ? (
-                        <span className="flag"> · {s.player.unavailableReason}</span>
-                      ) : null}
+                      <Flags
+                        items={playerFlags(
+                          s.player,
+                          openings[s.player.gsisId] ? openedRoleNote(openings[s.player.gsisId]!, s.player.position) : undefined,
+                          games[s.player.gsisId],
+                        )}
+                      />
                     </div>
                   </div>
                 )}
@@ -357,16 +349,7 @@ export default async function LineupPage() {
                 <div className="slot__name">{b.name}</div>
                 <div className="slot__sub">
                   {b.position}
-                  {newsLabel(b) ? <span className="flag flag--news"> · {newsLabel(b)}</span> : null}
-                  {marketLabel(b) ? <span className="flag flag--market"> · {marketLabel(b)}</span> : null}
-                  {b.matchup ? <span className="flag flag--game"> · {matchupLabel(b.matchup, b.position)}</span> : null}
-                  {b.form ? <span className="flag flag--market"> · {formLabel(b.form)}</span> : null}
-                  {openings[b.gsisId] ? (
-                    <span className="flag flag--news"> · role may grow: {openedRoleNote(openings[b.gsisId]!, b.position)}</span>
-                  ) : null}
-                  {b.unavailableReason ? (
-                    <span className="flag"> · {b.unavailableReason}</span>
-                  ) : null}
+                  <Flags items={playerFlags(b, openings[b.gsisId] ? openedRoleNote(openings[b.gsisId]!, b.position) : undefined, games[b.gsisId])} />
                 </div>
               </div>
               <div className="benchcard__pts">{b.available ? pts(b.projectedPoints) : '—'}</div>

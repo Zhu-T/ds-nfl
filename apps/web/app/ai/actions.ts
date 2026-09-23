@@ -62,7 +62,7 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
     return { messages: prev.messages, error: messageOf(error) };
   }
   if (!provider) {
-    return { messages: prev.messages, error: 'AI is off. Turn it on under Connect a league.' };
+    return { messages: prev.messages, error: 'AI is off. Turn it on under Settings.' };
   }
 
   // The league this page was showing, even if another has been made active since.

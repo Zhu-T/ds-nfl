@@ -41,6 +41,13 @@ describe('POST /prefs', () => {
     );
   });
 
+  it('switches the upside lineup on, since it is off by default, and back off by clearing the cookie', async () => {
+    expect((await post({ upside: 'on', back: '/' })).headers.get('set-cookie')).toMatch(/ds-upside=on/);
+    expect((await post({ upside: 'off', back: '/' })).headers.get('set-cookie')).toMatch(
+      /ds-upside=;.*(Max-Age=0|Expires=Thu, 01 Jan 1970)/i,
+    );
+  });
+
   it('ignores values it does not know', async () => {
     const res = await post({ week: 'last-year', back: '/' });
     expect(res.headers.get('set-cookie')).toBeNull();

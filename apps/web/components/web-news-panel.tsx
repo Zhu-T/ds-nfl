@@ -74,7 +74,7 @@ export function WebNewsPanel({
       ? `Claude searches the web for news on your players and top pickups for week ${week}.`
       : local
         ? `Gathers the last week of news on your players and top pickups (ESPN, Google News, and Ollama web search if a key is saved) for ${providerLabel} to read on this computer.`
-        : 'Checking news needs an AI provider. Turn one on under Connect a league.';
+        : 'Checking news needs an AI provider. Turn one on under Settings.';
 
   return (
     <section className="webnews" aria-live="polite">

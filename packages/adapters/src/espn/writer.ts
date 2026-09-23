@@ -162,6 +162,116 @@ export class EspnWriter {
       moved: changes.map((c) => ({ playerId: c.platformPlayerId, name: c.name, to: c.toSlot })),
     };
   }
+
+  /**
+   * Add a player, drop one, or both at once.
+   *
+   * A free agent is added immediately and, like a lineup write, is only reported
+   * as done once the roster reads back with them on it. A waiver claim is a
+   * request ESPN processes later, so it is reported as submitted and never as
+   * done; whether it succeeds is not known until the waiver run.
+   *
+   * The request shape follows the lineup write, which is proven, but ESPN
+   * documents none of this: `dryRun` builds the request and returns it without
+   * sending, so it can be inspected before anything touches a real roster.
+   */
+  async addDrop(ref: LeagueRef, week: number, request: AddDropRequest): Promise<AddDropResult> {
+    if (!request.add && !request.drop) {
+      throw new AdapterFailure({ kind: 'not-supported', capability: 'addDrop', reason: 'There is nothing to add or drop.' });
+    }
+    const items = [
+      ...(request.add
+        ? [{ playerId: Number(request.add.platformPlayerId), type: 'ADD', toLineupSlotId: slotId(request.add.toSlot) }]
+        : []),
+      ...(request.drop
+        ? [{ playerId: Number(request.drop.platformPlayerId), type: 'DROP', fromLineupSlotId: slotId(request.drop.fromSlot) }]
+        : []),
+    ];
+    const claim = request.kind === 'waivers';
+    const url = `${WRITE_HOST}/apis/v3/games/ffl/seasons/${ref.season}/segments/0/leagues/${ref.leagueId}/transactions/`;
+    const body = {
+      isLeagueManager: false,
+      teamId: Number(ref.teamId),
+      type: claim ? 'WAIVER' : 'FREEAGENT',
+      memberId: this.creds.swid,
+      scoringPeriodId: week,
+      executionType: 'EXECUTE',
+      ...(claim && request.bid !== undefined ? { bidAmount: request.bid } : {}),
+      items,
+    };
+    const describe = `${request.add ? `add ${request.add.name}` : ''}${request.add && request.drop ? ', ' : ''}${
+      request.drop ? `drop ${request.drop.name}` : ''
+    }`;
+
+    if (request.dryRun) {
+      return { state: 'not-sent', message: `Not sent (dry run): ${describe}.`, request: { url, body } };
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `espn_s2=${this.creds.espnS2}; SWID=${this.creds.swid}`,
+          'x-fantasy-platform': 'espn-fantasy-web',
+          'x-fantasy-source': 'kona',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (cause) {
+      throw new AdapterFailure({ kind: 'network', message: cause instanceof Error ? cause.message : String(cause) });
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      throw new AdapterFailure({
+        kind: 'auth-required',
+        platform: 'espn',
+        hint: 'Sign in to ESPN again and paste fresh cookies on the Settings page.',
+      });
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new AdapterFailure({ kind: 'upstream', status: res.status, url, body: espnMessage(text) ?? text });
+    }
+
+    // A claim is only queued, so there is nothing to read back yet.
+    if (claim) {
+      return {
+        state: 'submitted',
+        message: `Waiver claim submitted: ${describe}${request.bid !== undefined ? ` for $${request.bid}` : ''}. ESPN processes it at the next waiver run.`,
+      };
+    }
+
+    const after = await this.readSlots(ref, week);
+    const added = request.add ? after.has(request.add.platformPlayerId) : true;
+    const dropped = request.drop ? !after.has(request.drop.platformPlayerId) : true;
+    if (!added || !dropped) {
+      throw new AdapterFailure({ kind: 'shape-changed', expected: `${describe} on the roster afterwards`, url });
+    }
+    return { state: 'done', message: `Done and confirmed on ESPN: ${describe}.` };
+  }
+}
+
+export interface AddDropRequest {
+  /** The player to add, and the slot to put them in (usually the bench). */
+  readonly add?: { readonly platformPlayerId: string; readonly name: string; readonly toSlot: LineupSlot };
+  readonly drop?: { readonly platformPlayerId: string; readonly name: string; readonly fromSlot: LineupSlot };
+  /** A free agent goes through at once; a waiver player needs a claim. */
+  readonly kind: 'free-agent' | 'waivers';
+  /** The FAAB bid, in leagues with a budget. */
+  readonly bid?: number;
+  /** Build the request and return it unsent. */
+  readonly dryRun?: boolean;
+}
+
+export interface AddDropResult {
+  /** "done" is read back from the roster; "submitted" is a claim ESPN has queued. */
+  readonly state: 'done' | 'submitted' | 'not-sent';
+  readonly message: string;
+  /** Only for a dry run: exactly what would have been sent. */
+  readonly request?: { readonly url: string; readonly body: unknown };
 }
 
 function slotId(slot: LineupSlot): number {

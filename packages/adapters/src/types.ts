@@ -104,6 +104,12 @@ export interface LeagueInfo {
   readonly currentWeek: number;
   /** The last scoring period of the season, playoffs included. */
   readonly finalWeek: number;
+  /** How many teams reach the playoffs; 0 when the league does not say. */
+  readonly playoffTeamCount: number;
+  /** The last week of the regular season: after it, seeding is settled. */
+  readonly regularSeasonWeeks: number;
+  /** The FAAB budget each team starts with; 0 when the league uses waiver order instead. */
+  readonly faabBudget: number;
 }
 
 export interface FantasyTeam {
@@ -112,7 +118,14 @@ export interface FantasyTeam {
   readonly isMine: boolean;
   readonly wins?: number;
   readonly losses?: number;
+  readonly ties?: number;
+  /** Points scored so far: ESPN's usual tiebreak for seeding. */
+  readonly pointsFor?: number;
+  /** FAAB spent so far, in leagues with a budget. */
+  readonly faabSpent?: number;
 }
+
+export type { SeasonMatchup } from '@ds-nfl/core';
 
 export interface RosterPlayer {
   readonly platformPlayerId: string;
@@ -145,6 +158,12 @@ export interface RosterPlayer {
   readonly lastNewsAt?: number;
   /** Percent of ESPN leagues that roster the player: who an NFL team leans on. */
   readonly percentOwned?: number;
+  /**
+   * ESPN's rostered +/-: the change in percentOwned, in percentage points. Managers
+   * adding a player across thousands of leagues is an early sign of a streamer,
+   * before projections or a defense's few games catch up.
+   */
+  readonly percentChange?: number;
   /** Fantasy points per game actually scored this season, under this league's scoring. */
   readonly seasonAverage?: number;
   /** Games played this season. */

@@ -128,6 +128,36 @@ describe('leagueContext', () => {
     expect(leagueContext({ ...input, available: [] }).sections[3]!.body).toBe('No unrostered players were loaded.');
   });
 
+  it('lists the most-added players too, however they project, as trending', () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      name: `Receiver ${i}`,
+      position: 'WR',
+      proTeam: null,
+      projected: 12 - i,
+      pickup: 'free-agent' as const,
+      gain: 0,
+      // Receiver 11 projects worst but is being added most; a 0.1 rise is too small to mention.
+      ...(i === 11 ? { rosteredChange: 2.18 } : i === 0 ? { rosteredChange: 0.1 } : {}),
+    }));
+    const body = leagueContext({ ...input, available: many }).sections[3]!.body;
+    expect(body.split('\n').slice(1)).toHaveLength(9);
+    expect(body).toContain('- Receiver 11 (WR): projected 1.0, adds 0.0; free agent, can be added now; trending: rostered in 2.2% more ESPN leagues');
+    expect(body).not.toMatch(/Receiver 0 .*trending/);
+    expect(checkNumbers('Receiver 11 is rostered in 2.2% more leagues.', leagueContext({ ...input, available: many }).text).ok).toBe(true);
+  });
+
+  it('adds the win chance and the pickups that raise it most, numbers the answer may quote', () => {
+    const upside = leagueContext({
+      ...input,
+      upside: { opponent: "Jason's Finest Team", margin: -18.3, chance: 9.2, picks: [{ name: 'Tre Tucker', position: 'WR', ceiling: 18.6, after: 14.4 }] },
+    });
+    expect(upside.sections[2]!.body).toContain("projected to lose by 18.3 to Jason's Finest Team, about a 9% chance to win");
+    expect(upside.sections[2]!.body).toContain('- Tre Tucker (WR): ceiling 18.6, win chance to 14%');
+    expect(checkNumbers('Tucker has a ceiling of 18.6 and lifts your chance to 14%.', upside.text).ok).toBe(true);
+    const none = leagueContext({ ...input, upside: { opponent: 'Them', margin: 4, chance: 61, picks: [] } });
+    expect(none.sections[2]!.body).toContain('No available player whose game is still to come raises that chance.');
+  });
+
   it("adds each pickup's value across the coming weeks when a horizon is given", () => {
     const later = leagueContext({
       ...input,

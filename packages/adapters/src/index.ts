@@ -1,6 +1,6 @@
 export * from './types.js';
 export * from './credentials.js';
-export { EspnReader, type EspnCredentials } from './espn/adapter.js';
+export { EspnReader, playersFromKona, type EspnCredentials } from './espn/adapter.js';
 export * from './espn/ids.js';
 export * from './espn/scoring.js';
 export { SleeperReader } from './sleeper/adapter.js';

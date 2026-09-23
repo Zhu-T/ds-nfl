@@ -10,6 +10,8 @@ export function ApplyButton({
   disabled,
   disabledReason,
   label,
+  mode = 'best',
+  secondary = false,
 }: {
   /** The league this page shows; the lineup is written there and nowhere else. */
   leagueKey: string | null;
@@ -18,10 +20,14 @@ export function ApplyButton({
   disabled: boolean;
   disabledReason?: string;
   label: string;
+  /** Which lineup to write: the best-projected one, or the upside one; see applyLineup. */
+  mode?: 'best' | 'upside';
+  /** A quieter button, for the upside lineup beside the main one. */
+  secondary?: boolean;
 }) {
   const refresh = useRefresh();
   const [result, submit, pending] = useActionState<ApplyResult | null, FormData>(async () => {
-    const applied = await applyLineup(leagueKey ?? '', week);
+    const applied = await applyLineup(leagueKey ?? '', week, mode);
     if (applied.ok) refresh();
     return applied;
   }, null);
@@ -30,7 +36,7 @@ export function ApplyButton({
     <div className="apply">
       <form action={submit}>
         <button
-          className="btn btn--primary"
+          className={secondary ? 'btn' : 'btn btn--primary'}
           type="submit"
           disabled={disabled || pending}
           {...(disabled && disabledReason ? { title: disabledReason } : {})}

@@ -1,44 +1,49 @@
 /**
  * NFL matchups in player evaluation: whether they are on, the week's data, and
- * each player's opponent with how many points it allows to their position.
+ * each D/ST's opponent with how D/STs have scored against it, over their
+ * projections. See packages/core/src/matchup/adjust.ts for why only D/STs, and
+ * why not ESPN's opponent ranks.
  *
  * Like betting odds, a refinement the app works without. Loading never throws;
- * when ESPN's matchup data cannot be read, projections go on without it and the
- * page says why.
+ * when the data cannot be read, projections go on without it and the page says why.
  */
 
 import 'server-only';
 import { cookies } from 'next/headers';
-import {
-  gamesBefore,
-  type EspnReader,
-  type LeagueInfo,
-  type LeagueRef,
-  type PositionRatings,
-  type ProSchedule,
-  type RosterPlayer,
-} from '@ds-nfl/adapters';
-import type { MatchupInput, Position } from '@ds-nfl/core';
+import { opponentGames, type EspnReader, type LeagueInfo, type LeagueRef, type ProSchedule, type RosterPlayer } from '@ds-nfl/adapters';
+import { MATCHUP_POSITIONS, opponentSplits, type MatchupInput, type OpponentSplit, type Position } from '@ds-nfl/core';
 import { MATCHUP_COOKIE } from './pref-cookies';
 
 export interface MatchupContext {
   readonly week: number;
-  /** The week being played; games before it count toward a defense's sample. */
-  readonly currentWeek: number;
   readonly schedule: ProSchedule;
-  readonly ratings: ReadonlyMap<Position, PositionRatings>;
+  /** By position, then opponent: how players at the position have scored against it, over their projections. */
+  readonly splits: ReadonlyMap<Position, ReadonlyMap<string, OpponentSplit>>;
 }
 
 /** Safe to send to the browser. */
 export interface MatchupStatus {
   readonly enabled: boolean;
-  /** True when ESPN has ratings and a schedule for the week. */
+  /** True when at least one week has been played to measure opponents by. */
   readonly available: boolean;
   readonly error: string | null;
 }
 
 export async function matchupsEnabled(): Promise<boolean> {
   return (await cookies()).get(MATCHUP_COOKIE)?.value !== 'off';
+}
+
+/** Finished weeks never change, so each is read once per league and season. */
+const weekCache = new Map<string, Promise<readonly RosterPlayer[]>>();
+
+function defenseWeek(reader: EspnReader, ref: LeagueRef, week: number): Promise<readonly RosterPlayer[]> {
+  const key = `${ref.leagueId}:${ref.season}:${week}`;
+  const hit = weekCache.get(key);
+  if (hit) return hit;
+  const read = reader.getDefenseWeek(ref, week);
+  weekCache.set(key, read);
+  read.catch(() => weekCache.delete(key));
+  return read;
 }
 
 export async function matchupsFor(
@@ -50,10 +55,13 @@ export async function matchupsFor(
   const off: MatchupStatus = { enabled: false, available: false, error: null };
   if (!(await matchupsEnabled())) return { ctx: null, status: off };
   try {
-    const [schedule, ratings] = await Promise.all([reader.getProSchedule(ref), reader.getPositionalRatings(ref, week)]);
-    const available = ratings.size > 0 && (schedule.weeks.get(week)?.size ?? 0) > 0;
+    // Only weeks already over: a week in progress would count half-played games.
+    const finished = Array.from({ length: Math.max(0, league.currentWeek - 1) }, (_, i) => i + 1);
+    const [schedule, ...played] = await Promise.all([reader.getProSchedule(ref), ...finished.map((w) => defenseWeek(reader, ref, w))]);
+    const splits = opponentSplits(opponentGames(schedule, new Map(finished.map((w, i) => [w, played[i]!]))));
+    const available = splits.size > 0 && (schedule.weeks.get(week)?.size ?? 0) > 0;
     return {
-      ctx: available ? { week, currentWeek: league.currentWeek, schedule, ratings } : null,
+      ctx: available ? { week, schedule, splits } : null,
       status: { enabled: true, available, error: null },
     };
   } catch (error) {
@@ -61,24 +69,17 @@ export async function matchupsFor(
   }
 }
 
-/** Each player's matchup for the week, by player id. Players on bye, or without data, are left out. */
+/** Each D/ST's matchup for the week, by player id. Other positions, byes, and opponents without data are left out. */
 export function matchupInputs(ctx: MatchupContext | null, players: readonly RosterPlayer[]): Map<string, MatchupInput> {
   const out = new Map<string, MatchupInput>();
   if (!ctx) return out;
   const games = ctx.schedule.weeks.get(ctx.week);
   for (const p of players) {
+    if (!MATCHUP_POSITIONS.has(p.position)) continue;
     const game = p.proTeam ? games?.get(p.proTeam) : undefined;
-    const ratings = ctx.ratings.get(p.position);
-    const rating = game ? ratings?.byOpponent.get(game.opponent) : undefined;
-    if (!game || !ratings || !rating) continue;
-    out.set(p.platformPlayerId, {
-      opponent: game.opponent,
-      home: game.home,
-      allowed: rating.allowed,
-      average: ratings.average,
-      rank: rating.rank,
-      games: gamesBefore(ctx.schedule, game.opponent, ctx.currentWeek),
-    });
+    const split = game ? ctx.splits.get(p.position)?.get(game.opponent) : undefined;
+    if (!game || !split) continue;
+    out.set(p.platformPlayerId, { opponent: game.opponent, home: game.home, ...split });
   }
   return out;
 }

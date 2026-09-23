@@ -120,3 +120,10 @@ export interface Player {
  * than an id match, and the previous implementation was right to surface it.
  */
 export type MatchProvenance = 'id' | 'name' | 'none';
+
+/** One week's pairing in a fantasy league's schedule. */
+export interface SeasonMatchup {
+  readonly week: number;
+  readonly homeTeamId: string;
+  readonly awayTeamId: string;
+}

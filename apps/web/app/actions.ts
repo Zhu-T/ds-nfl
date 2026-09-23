@@ -3,6 +3,7 @@
 import type { LineupSlot } from '@ds-nfl/core';
 import { AdapterFailure, EspnWriter, describeError, type DesiredSlot } from '@ds-nfl/adapters';
 import { planLineup } from '@/lib/week';
+import { upsideLineup } from '@/lib/upside';
 
 export interface ApplyResult {
   readonly ok: boolean;
@@ -18,7 +19,12 @@ export interface ApplyResult {
  * same function the page used, for the league and week the page showed, with
  * the same web news adjustments — so what is written is what was shown.
  */
-export async function applyLineup(key: string, week: number): Promise<ApplyResult> {
+/**
+ * `mode` picks which lineup: "best", the best-projected one the page leads with,
+ * or "upside", the one with the best chance of winning this week's matchup,
+ * shown only when its switch is on. Either is recomputed here.
+ */
+export async function applyLineup(key: string, week: number, mode: 'best' | 'upside' = 'best'): Promise<ApplyResult> {
   const gone = { ok: false, message: 'That league is no longer connected. Reload the page.' };
   if (!key) return gone;
 
@@ -28,9 +34,11 @@ export async function applyLineup(key: string, week: number): Promise<ApplyResul
 
     // Target slot per player: a starting slot if the optimizer seats them,
     // otherwise the bench.
+    const chosen = mode === 'upside' ? (await upsideLineup(plan))?.solution : plan.optimal;
+    if (!chosen) return { ok: false, message: 'There is no matchup this week to play for, so there is no upside lineup.' };
     const target = new Map<string, LineupSlot>();
     for (const p of plan.roster) target.set(p.platformPlayerId, 'BENCH');
-    for (const s of plan.optimal.starters) {
+    for (const s of chosen.starters) {
       if (s.player) target.set(s.player.gsisId, s.slot);
     }
 
@@ -46,7 +54,13 @@ export async function applyLineup(key: string, week: number): Promise<ApplyResul
       }));
 
     if (changes.length === 0) {
-      return { ok: true, message: `Your week ${plan.week} lineup is already optimal — nothing to change.` };
+      return {
+        ok: true,
+        message:
+          mode === 'upside'
+            ? `Your week ${plan.week} lineup is already the upside lineup — nothing to change.`
+            : `Your week ${plan.week} lineup is already optimal — nothing to change.`,
+      };
     }
 
     const writer = new EspnWriter({ espnS2: plan.conn.espnS2, swid: plan.conn.swid }, (r, w) =>

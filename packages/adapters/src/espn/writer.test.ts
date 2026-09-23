@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { EspnWriter, espnMessage, type DesiredSlot } from './writer.js';
 import type { LeagueRef } from '../types.js';
 import type { LineupSlot } from '@ds-nfl/core';
@@ -57,5 +57,59 @@ describe('espnMessage', () => {
   it('returns null for a body it cannot parse, so the raw text is used instead', () => {
     expect(espnMessage('<html>502</html>')).toBeNull();
     expect(espnMessage('{}')).toBeNull();
+  });
+});
+
+describe('EspnWriter addDrop', () => {
+  const add = { platformPlayerId: '99', name: 'Tre Tucker', toSlot: 'BENCH' as LineupSlot };
+  const drop = { platformPlayerId: '7', name: 'Carson Wentz', fromSlot: 'BENCH' as LineupSlot };
+
+  it('builds a free-agent add and drop without sending it, on a dry run', async () => {
+    const res = await new EspnWriter(creds, noReadback).addDrop(ref, 3, { add, drop, kind: 'free-agent', dryRun: true });
+    expect(res.state).toBe('not-sent');
+    expect(res.request!.url).toContain('/seasons/2026/segments/0/leagues/1/transactions/');
+    expect(res.request!.body).toMatchObject({
+      teamId: 4,
+      type: 'FREEAGENT',
+      scoringPeriodId: 3,
+      executionType: 'EXECUTE',
+      items: [
+        { playerId: 99, type: 'ADD', toLineupSlotId: 20 },
+        { playerId: 7, type: 'DROP', fromLineupSlotId: 20 },
+      ],
+    });
+    expect(res.request!.body).not.toHaveProperty('bidAmount');
+  });
+
+  it('sends a waiver claim with its bid, and reports it as submitted rather than done', async () => {
+    const calls: { url: string; body: any }[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return new Response('{}', { status: 200 });
+    });
+    try {
+      const res = await new EspnWriter(creds, noReadback).addDrop(ref, 3, { add, drop, kind: 'waivers', bid: 12 });
+      expect(res.state).toBe('submitted');
+      expect(res.message).toContain('$12');
+      expect(calls[0]!.body).toMatchObject({ type: 'WAIVER', bidAmount: 12 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refuses a request that neither adds nor drops anyone', async () => {
+    await expect(new EspnWriter(creds, noReadback).addDrop(ref, 3, { kind: 'free-agent' })).rejects.toThrow(/nothing to add or drop/i);
+  });
+
+  it('only calls a free-agent add done once the roster reads back with the player on it', async () => {
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200 }));
+    try {
+      const empty = new EspnWriter(creds, async () => new Map<string, LineupSlot>());
+      await expect(empty.addDrop(ref, 3, { add, kind: 'free-agent' })).rejects.toThrow(/on the roster afterwards/);
+      const onRoster = new EspnWriter(creds, async () => new Map<string, LineupSlot>([['99', 'BENCH' as LineupSlot]]));
+      expect((await onRoster.addDrop(ref, 3, { add, kind: 'free-agent' })).state).toBe('done');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

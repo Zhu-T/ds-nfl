@@ -43,6 +43,16 @@ export interface ContextAvailable {
   readonly horizonGain?: number;
   /** Injury designation, or that waiver articles recommend them. */
   readonly note?: string;
+  /** ESPN's rostered +/-: the change in the percent of ESPN leagues rostering them, in percentage points. */
+  readonly rosteredChange?: number;
+}
+
+export interface ContextUpside {
+  readonly opponent: string;
+  /** Your best-projected lineup's total minus theirs. */
+  readonly margin: number;
+  readonly chance: number;
+  readonly picks: readonly { readonly name: string; readonly position: string; readonly ceiling: number; readonly after: number }[];
 }
 
 export interface ContextTrade {
@@ -79,6 +89,8 @@ export interface LeagueContextInput {
   readonly available?: readonly ContextAvailable[];
   /** The coming weeks that `horizonGain` covers, e.g. "weeks 2–5". */
   readonly horizon?: string;
+  /** Your chance of winning this week's matchup, in percent, and the pickups that raise it most. */
+  readonly upside?: ContextUpside;
   readonly trades: readonly ContextTrade[];
   readonly news: readonly ContextNews[];
   /** Title for the first section, e.g. "Week 2 (next week, not started)". */
@@ -107,7 +119,7 @@ export function leagueContext(input: LeagueContextInput): {
   const sections: ContextSection[] = [
     { title: input.weekLabel ?? 'This week', body: input.lineupFacts },
     { title: 'Your roster', body: rosterBody(input.roster) },
-    { title: 'Waiver wire', body: waiverBody(input.waivers, input.horizon) },
+    { title: 'Waiver wire', body: waiverBody(input.waivers, input.horizon) + (input.upside ? `\n${upsideBody(input.upside)}` : '') },
     ...(input.available ? [{ title: 'Available players', body: availableBody(input.available, input.horizon) }] : []),
     { title: 'Trade ideas', body: tradeBody(input.trades) },
     { title: 'Recent news', body: newsBody(input.news) },
@@ -161,9 +173,21 @@ function waiverBody(waivers: readonly ContextWaiver[], horizon?: string): string
   ].join('\n');
 }
 
+function upsideBody(u: ContextUpside): string {
+  const lead = `Playing for the win this week: your best lineup is projected ${u.margin < 0 ? `to lose by ${n(-u.margin)}` : `to win by ${n(u.margin)}`} to ${u.opponent}, about a ${Math.round(u.chance)}% chance to win (each player's spread is the one typical for their position and projection; the ceiling is the score beaten one week in ten).`;
+  if (u.picks.length === 0) return `${lead} No available player whose game is still to come raises that chance.`;
+  return [
+    `${lead} Pickups that raise it most, whose games are still to come:`,
+    ...u.picks.map((p) => `- ${p.name} (${p.position}): ceiling ${n(p.ceiling)}, win chance to ${Math.round(p.after)}%`),
+  ].join('\n');
+}
+
 /** How many available players the brief lists per position: enough to answer "who is out there", short enough for a local model. */
 const AVAILABLE_PER_POSITION: Record<string, number> = { QB: 5, RB: 8, WR: 8, TE: 5, K: 3, DST: 3 };
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'];
+/** The most-added players are listed too, however they project: likely streamers. */
+const TRENDING_LISTED = 8;
+const TRENDING_MIN = 0.25;
 
 function availableBody(players: readonly ContextAvailable[], horizon?: string): string {
   if (players.length === 0) return 'No unrostered players were loaded.';
@@ -173,21 +197,25 @@ function availableBody(players: readonly ContextAvailable[], horizon?: string): 
     const i = POSITION_ORDER.indexOf(pos);
     return i === -1 ? POSITION_ORDER.length : i;
   };
+  const rising = (p: ContextAvailable) => (p.rosteredChange ?? 0) >= TRENDING_MIN;
+  const trending = new Set(
+    players.filter(rising).sort((a, b) => b.rosteredChange! - a.rosteredChange!).slice(0, TRENDING_LISTED),
+  );
   const lines = [...byPosition.keys()]
     .sort((a, b) => rank(a) - rank(b))
-    .flatMap((pos) =>
-      [...byPosition.get(pos)!]
-        .sort((a, b) => b.projected - a.projected)
-        .slice(0, AVAILABLE_PER_POSITION[pos] ?? 3)
-        .map((p) => {
-          const team = p.proTeam ? `, ${p.proTeam}` : '';
-          const how = p.pickup === 'waivers' ? 'needs a waiver claim' : 'free agent, can be added now';
-          const note = p.note ? `; ${p.note}` : '';
-          return `- ${p.name} (${p.position}${team}): projected ${n(p.projected)}, ${adds(p.gain, p.horizonGain, horizon)}; ${how}${note}`;
-        }),
-    );
+    .flatMap((pos) => {
+      const sorted = [...byPosition.get(pos)!].sort((a, b) => b.projected - a.projected);
+      const top = sorted.slice(0, AVAILABLE_PER_POSITION[pos] ?? 3);
+      return [...top, ...sorted.filter((p) => trending.has(p) && !top.includes(p))].map((p) => {
+        const team = p.proTeam ? `, ${p.proTeam}` : '';
+        const how = p.pickup === 'waivers' ? 'needs a waiver claim' : 'free agent, can be added now';
+        const trend = rising(p) ? `; trending: rostered in ${n(p.rosteredChange!)}% more ESPN leagues` : '';
+        const note = p.note ? `; ${p.note}` : '';
+        return `- ${p.name} (${p.position}${team}): projected ${n(p.projected)}, ${adds(p.gain, p.horizonGain, horizon)}; ${how}${trend}${note}`;
+      });
+    });
   return [
-    "The best-projected players no team in the league has rostered, by position, on this week's projections. \"Adds\" is what each would add to your best possible lineup, valued as if no game had kicked off; 0 means they would not start for you.",
+    "The best-projected players no team in the league has rostered, by position, on this week's projections, plus the ones managers across ESPN are adding most (\"trending\"): likely streamers, often before their projection catches up. \"Adds\" is what each would add to your best possible lineup, valued as if no game had kicked off; 0 means they would not start for you.",
     ...lines,
   ].join('\n');
 }

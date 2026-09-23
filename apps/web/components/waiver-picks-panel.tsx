@@ -14,6 +14,9 @@ function ago(iso: string): string {
   return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
 }
 
+/** Picks listed before the rest fold away. */
+const SHOWN = 5;
+
 function Sources({ pick }: { pick: MatchedPick }) {
   return (
     <p className="webnews__sources">
@@ -67,22 +70,40 @@ export function WaiverPicksPanel({
       ? `Claude searches this week's waiver wire articles and lists who they recommend; each pick is then checked against your league.`
       : provider === 'ollama'
         ? `${providerLabel} reads this week's waiver wire headlines (and article text, if an Ollama web search key is saved) and lists who they recommend; each pick is then checked against your league.`
-        : 'Finding web picks needs an AI provider. Turn one on under Connect a league.';
+        : 'Finding web picks needs an AI provider. Turn one on under Settings.';
 
   const gainLabel = (p: MatchedPick) => {
     const gain = p.playerId ? gains[p.playerId] : undefined;
     if (gain === undefined) return 'not weighed';
-    return gain > 0 ? `+${gain.toFixed(1)} to your lineup in week ${week}` : `no gain to your lineup in week ${week}`;
+    return gain > 0 ? `+${gain.toFixed(1)} in week ${week}` : `no gain in week ${week}`;
   };
   const howToAdd = (p: MatchedPick) =>
-    (p.playerId && pickupById[p.playerId]) === 'waivers' || p.status === 'waivers' ? 'waiver claim' : 'free agent, add now';
+    (p.playerId && pickupById[p.playerId]) === 'waivers' || p.status === 'waivers' ? 'waivers' : 'free agent';
+
+  // One line per pick; the reason and sources open on click.
+  const pickRow = (p: MatchedPick) => (
+    <details key={`${p.name}-${p.playerId}`} className="webnews__item webnews__item--compact">
+      <summary className="webnews__row">
+        <span className="webnews__who">
+          {p.name}
+          {p.position ? ` (${p.position})` : ''}
+        </span>
+        <span className="webnews__status">{howToAdd(p)}</span>
+        <span className="webnews__gain">{gainLabel(p)}</span>
+      </summary>
+      <p className="webnews__summary">{p.reason}</p>
+      <Sources pick={p} />
+    </details>
+  );
 
   return (
     <section className="webnews" aria-live="polite" style={{ marginBottom: '1rem' }}>
       <div className="webnews__head">
         <div>
           <h2 className="webnews__title">Waiver picks from the web</h2>
-          <p className="field__hint">{hint}</p>
+          <p className="field__hint" title={hint}>
+            {provider === 'off' ? hint : 'Who waiver articles recommend this week, checked against your league.'}
+          </p>
         </div>
         {provider !== 'off' && (
           <button
@@ -121,20 +142,13 @@ export function WaiverPicksPanel({
             <p className="field__hint">None of the recommended players is available in your league.</p>
           ) : (
             <div className="webnews__list">
-              {available.map((p) => (
-                <div key={`${p.name}-${p.playerId}`} className="webnews__item">
-                  <div className="webnews__row">
-                    <span className="webnews__who">
-                      {p.name}
-                      {p.position ? ` (${p.position})` : ''}
-                    </span>
-                    <span className="webnews__status">{howToAdd(p)}</span>
-                    <span className="webnews__gain">{gainLabel(p)}</span>
-                  </div>
-                  <p className="webnews__summary">{p.reason}</p>
-                  <Sources pick={p} />
-                </div>
-              ))}
+              {available.slice(0, SHOWN).map(pickRow)}
+              {available.length > SHOWN && (
+                <details className="fold fold--inline">
+                  <summary>{available.length - SHOWN} more</summary>
+                  <div className="webnews__list">{available.slice(SHOWN).map(pickRow)}</div>
+                </details>
+              )}
             </div>
           )}
 

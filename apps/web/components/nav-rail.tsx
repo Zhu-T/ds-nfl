@@ -10,12 +10,14 @@ const THIS_WEEK = [
   { href: '/waivers', label: 'Waivers' },
   { href: '/trades', label: 'Trades' },
   { href: '/players', label: 'Players' },
+  { href: '/season', label: 'Coming weeks' },
 ];
 
 const LEAGUE = [
   { href: '/ai', label: 'League AI' },
+  { href: '/review', label: "How it's doing" },
   { href: '/settings', label: 'Scoring & roster' },
-  { href: '/connect', label: 'Connect a league' },
+  { href: '/connect', label: 'Settings' },
 ];
 
 export function NavRail({

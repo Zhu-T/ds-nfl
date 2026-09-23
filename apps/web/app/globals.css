@@ -1599,3 +1599,290 @@ form.weektoggle {
   font-size: 0.75rem;
   color: var(--gain);
 }
+
+/* ---------- compact layout: adjustments bar, folds, filters ---------- */
+
+/* Odds, opponents, and form in one line; the explanations fold away. */
+.adjustbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.adjustbar form {
+  display: contents;
+}
+
+.adjustbar__lead {
+  color: var(--text-dim);
+}
+
+.adjustbar__status {
+  margin-left: 0.3rem;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.adjustbar__how {
+  flex-basis: 100%;
+}
+
+.adjustbar__how summary,
+.fold > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  list-style: none;
+}
+
+.adjustbar__how summary::-webkit-details-marker,
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.adjustbar__how summary::before,
+.fold > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s;
+}
+
+.adjustbar__how[open] summary::before,
+.fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.adjustbar__how summary:hover,
+.fold > summary:hover {
+  color: var(--text);
+}
+
+.adjustbar__how dl {
+  margin: 0.6rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+  max-width: 52rem;
+}
+
+.adjustbar__how dt {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.adjustbar__how dd {
+  margin: 0.1rem 0 0;
+}
+
+.adjustbar__how p {
+  margin: 0.5rem 0 0;
+  color: var(--text-dim);
+}
+
+/* A secondary section, closed until wanted. */
+.fold {
+  margin-top: 1.25rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.fold[open] > summary {
+  margin-bottom: 0.9rem;
+}
+
+.fold--inline {
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.6rem;
+  border-style: dashed;
+}
+
+/* Row notes: one line, the rest on hover. */
+.flag[title] {
+  cursor: help;
+}
+
+.sortbar__gap {
+  width: 0.75rem;
+}
+
+.showmore {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+/* Roster slots as one row of counts. */
+.rosterchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rosterchip {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--slot-hue);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.rosterchip b {
+  color: var(--text);
+  margin-right: 0.2rem;
+}
+
+/* Scoring rules as a compact grid instead of a long table. */
+.rulegrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.4rem;
+}
+
+.rulegrid__cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+}
+
+.rulegrid__pts {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.rulegrid__over {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+/* Declared after .chip, so the active state wins. */
+.chip.chip--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.flag--plain {
+  color: var(--text-muted);
+}
+
+/* A web pick on one line; its reason and sources open on click. */
+.webnews__item--compact {
+  padding: 0.4rem 0.75rem;
+}
+
+.webnews__item--compact > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.webnews__item--compact > summary::-webkit-details-marker {
+  display: none;
+}
+
+.webnews__item--compact[open] > summary {
+  margin-bottom: 0.4rem;
+}
+
+/* ---------- upside lineup (off by default) ---------- */
+
+.upside {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.upside__switch {
+  display: inline;
+}
+
+.upside__note {
+  display: inline;
+  margin-left: 0.6rem;
+}
+
+.upside__box {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.upside__box b {
+  color: var(--text);
+}
+
+.upside__moves {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.upside__fine {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* Text with more on hover. */
+.hovernote {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
+/* ---------- adding a player ---------- */
+
+.addmove {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.addmove__confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-md);
+}
+
+.addmove__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+}
+
+.addmove__field .field__input {
+  width: auto;
+  min-width: 8rem;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+}
+
+.addmove__field input.field__input {
+  min-width: 4.5rem;
+}
+
+.slot__actions {
+  margin-top: 0.45rem;
+}

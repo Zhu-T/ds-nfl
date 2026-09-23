@@ -43,7 +43,7 @@ export async function checkWaiverPicks(key: string, week: number): Promise<Picks
   } catch (error) {
     return fail(error);
   }
-  if (!provider) return { ok: false, message: 'Finding web picks needs an AI provider. Turn one on under Connect a league.' };
+  if (!provider) return { ok: false, message: 'Finding web picks needs an AI provider. Turn one on under Settings.' };
 
   let plan;
   try {

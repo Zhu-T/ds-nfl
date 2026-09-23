@@ -35,32 +35,26 @@ export default async function SettingsPage() {
               <h1 className="section__title">Roster</h1>
               <span className="section__meta">{data.league.formatLabel}</span>
             </div>
-            <div className="slots">
+            <div className="rosterchips">
               {Object.entries(data.rosterSettings.slots).map(([slot, count]) => (
-                <div
+                <span
                   key={slot}
-                  className="slot"
+                  className="rosterchip"
+                  title={starterLabel(slot as LineupSlot)}
                   style={{ ['--slot-hue' as string]: slotHue(slot as LineupSlot) }}
                 >
-                  <div className="slot__tag">{SLOT_LABEL[slot as LineupSlot] ?? slot}</div>
-                  <div className="slot__name">{starterLabel(slot as LineupSlot)}</div>
-                  <div className="slot__pts">{count}</div>
-                </div>
+                  <b>{count}</b> {SLOT_LABEL[slot as LineupSlot] ?? slot}
+                </span>
               ))}
-              <div className="slot" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
-                <div className="slot__tag">BN</div>
-                <div className="slot__name">Bench</div>
-                <div className="slot__pts">{data.rosterSettings.benchSize}</div>
-              </div>
-              <div className="slot" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
-                <div className="slot__tag">IR</div>
-                <div className="slot__name">Injured reserve</div>
-                <div className="slot__pts">{data.rosterSettings.irSize}</div>
-              </div>
+              <span className="rosterchip" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
+                <b>{data.rosterSettings.benchSize}</b> Bench
+              </span>
+              <span className="rosterchip" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
+                <b>{data.rosterSettings.irSize}</b> IR
+              </span>
             </div>
           </section>
 
-          <hr className="hashrule" style={{ marginTop: '2.25rem' }} />
 
           <section className="section">
             <div className="section__head">
@@ -68,30 +62,19 @@ export default async function SettingsPage() {
               <span className="section__meta">{data.scoredRuleCount} rules read from ESPN</span>
             </div>
             <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
-              Every rule your league scores, exactly as the engine applies it. ESPN publishes no
-              statId dictionary, so the ids are shown raw — but the values are verified: scoring
-              every player-week with these rules reproduces ESPN&apos;s own totals exactly.
+              Every rule your league scores, by ESPN statId (ESPN publishes no names for them), with
+              points and any per-position override. Scoring every player-week with these rules
+              reproduces ESPN&apos;s own totals exactly.
             </p>
 
-            <div className="tablewrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>ESPN statId</th>
-                    <th className="table__num">Points</th>
-                    <th>Per-position overrides</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.scoring.map((r) => (
-                    <tr key={r.statId}>
-                      <td className="table__mono">{r.statId}</td>
-                      <td className="table__num">{r.points}</td>
-                      <td className="table__dim">{r.overrides ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rulegrid">
+              {data.scoring.map((r) => (
+                <div key={r.statId} className="rulegrid__cell" {...(r.overrides ? { title: r.overrides } : {})}>
+                  <span className="table__mono">#{r.statId}</span>
+                  <span className="rulegrid__pts">{r.points}</span>
+                  {r.overrides && <span className="rulegrid__over">{r.overrides}</span>}
+                </div>
+              ))}
             </div>
           </section>
         </>

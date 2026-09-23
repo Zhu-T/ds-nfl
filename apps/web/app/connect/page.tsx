@@ -46,9 +46,9 @@ export default async function ConnectPage() {
     <>
       <section className="section" style={{ marginTop: 0 }}>
         <div className="section__head">
-          <h1 className="section__title">Connect a league</h1>
+          <h1 className="section__title">Settings</h1>
           <span className="section__meta">
-            {leagues.length === 0 ? 'none connected' : `${leagues.length} connected`}
+            {leagues.length === 0 ? 'no league connected' : `${leagues.length} ${leagues.length === 1 ? 'league' : 'leagues'} connected`}
           </span>
         </div>
 
@@ -130,26 +130,25 @@ export default async function ConnectPage() {
           </div>
         )}
 
-        {cookies && (
-          <p className="field__hint" style={{ marginBottom: '0.75rem' }}>
-            Or add one by id, for a league not listed here or one on another ESPN account.
-          </p>
+        {cookies ? (
+          <details className="fold">
+            <summary>Add by league id, for a league not listed here or on another ESPN account</summary>
+            <EspnForm hasCookies />
+          </details>
+        ) : (
+          <EspnForm hasCookies={false} />
         )}
-        <EspnForm hasCookies={cookies !== null} />
       </section>
 
       {leagues.length > 0 && (
-        <section className="section">
-          <div className="section__head">
-            <h2 className="section__title">Renew ESPN cookies</h2>
-          </div>
+        <details className="fold">
+          <summary>Renew ESPN cookies, when ESPN starts rejecting the saved ones</summary>
           <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
-            When ESPN starts rejecting the saved cookies, paste fresh ones here. They are checked
-            against the active league, then saved for every connected league on the same ESPN
-            account.
+            Fresh cookies are checked against the active league, then saved for every connected
+            league on the same ESPN account.
           </p>
           <CookieForm />
-        </section>
+        </details>
       )}
 
       <section className="section" id="ai">
@@ -175,13 +174,8 @@ export default async function ConnectPage() {
         />
       </section>
 
-      <hr className="hashrule" style={{ marginTop: '2.25rem' }} />
-
-      <section className="section">
-        <div className="section__head">
-          <h2 className="section__title">How connecting works</h2>
-        </div>
-
+      <details className="fold">
+        <summary>How connecting works</summary>
         <div className="slots">
           <div className="slot" style={{ ['--slot-hue' as string]: 'var(--pos-wr)' }}>
             <div className="slot__tag">ESPN</div>
@@ -232,7 +226,7 @@ export default async function ConnectPage() {
             </div>
           </div>
         </div>
-      </section>
+      </details>
     </>
   );
 }

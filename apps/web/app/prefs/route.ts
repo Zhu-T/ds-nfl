@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { FORM_COOKIE, MATCHUP_COOKIE, ODDS_COOKIE, WEEK_COOKIE } from '../../lib/pref-cookies';
+import { FORM_COOKIE, MATCHUP_COOKIE, ODDS_COOKIE, UPSIDE_COOKIE, WEEK_COOKIE } from '../../lib/pref-cookies';
 
 /**
  * Save a display preference (the week shown, or whether betting odds or NFL
@@ -40,6 +40,11 @@ export async function POST(request: Request): Promise<Response> {
   const recentForm = form.get('form');
   if (recentForm === 'off') response.cookies.set(FORM_COOKIE, 'off', { ...options, maxAge: 60 * 60 * 24 * 365 });
   if (recentForm === 'on') response.cookies.delete(FORM_COOKIE);
+
+  // The upside lineup is opt-in: on is saved, off clears it.
+  const upside = form.get('upside');
+  if (upside === 'on') response.cookies.set(UPSIDE_COOKIE, 'on', { ...options, maxAge: 60 * 60 * 24 * 365 });
+  if (upside === 'off') response.cookies.delete(UPSIDE_COOKIE);
 
   return response;
 }

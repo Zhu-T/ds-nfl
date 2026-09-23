@@ -12,3 +12,7 @@ export * from './weeks.js';
 export * from './odds/market.js';
 export * from './matchup/adjust.js';
 export * from './form/adjust.js';
+export * from './ceiling/spread.js';
+export * from './ceiling/win.js';
+export * from './season/coverage.js';
+export * from './season/simulate.js';

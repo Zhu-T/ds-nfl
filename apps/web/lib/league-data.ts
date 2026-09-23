@@ -19,9 +19,11 @@ import {
   type HorizonValue,
   type NewsFinding,
   type OpenedRole,
+  coverageByWeek,
   optimizeLineup,
   rankWaiverCandidates,
   valueToRoster,
+  type LineupSlot,
   type OptimizerPlayer,
   type PlayerValue,
   type RosterSettings,
@@ -35,6 +37,7 @@ import {
   activeFindings,
   readWebPicks,
   type WebPicksReport,
+  type WeekResults,
   describeError,
   gatherPlayerNews,
   AdapterFailure,
@@ -52,7 +55,10 @@ import { searchWords } from './player-search';
 import { matchupInputs, matchupsFor, type MatchupContext } from './matchups';
 import { openingsAmong } from './depth';
 import { horizonFor } from './horizon';
-import { recordSnapshot, snapshotRow } from './results';
+import { recordSnapshot, reviewWeeks, snapshotRow } from './results';
+import { planLineup } from './week';
+import { ceilingView, type CeilingView } from './upside';
+import { seasonOdds, type SeasonOddsView } from './season-odds';
 import { formEnabled, formInputs } from './form';
 
 export type Loaded<T> =
@@ -184,7 +190,24 @@ export interface WaiverView {
   readonly horizonById: Readonly<Record<string, HorizonValue>>;
   /** For candidates worth adding: the player whose absence costs your lineups least across those weeks, by candidate id. */
   readonly dropById: Readonly<Record<string, DropSuggestion>>;
+  /** ESPN's rostered +/- and rostered percent for each available player that has them, by id. */
+  readonly trendById: Readonly<Record<string, Trend>>;
+  /** Your chance of winning this week's matchup and the pickups that raise it most; null without a matchup. */
+  readonly ceiling: CeilingView | null;
+  /** Your players, for choosing who to drop when adding someone. */
+  readonly myRoster: readonly { readonly id: string; readonly name: string; readonly position: string; readonly locked: boolean }[];
+  /** The FAAB budget and what is left of it; null in leagues that use waiver order. */
+  readonly faab: { readonly budget: number; readonly remaining: number } | null;
 }
+
+export interface Trend {
+  /** Change in the percent of ESPN leagues rostering them, in percentage points. */
+  readonly change: number;
+  readonly rostered: number;
+}
+
+/** A rise worth mentioning: managers adding them in at least a quarter-point more of ESPN's leagues. */
+export const TRENDING_MIN = 0.25;
 
 export interface AvailablePlayer {
   readonly id: string;
@@ -201,6 +224,8 @@ export interface AvailablePlayer {
   readonly opening: string | null;
   /** What they add to your best lineups across the coming weeks. */
   readonly horizonGain: number;
+  /** ESPN's rostered +/-, in percentage points, when known. */
+  readonly rosteredChange: number | null;
 }
 
 export function loadWaivers(key?: string | null, requestedWeek?: number | null): Promise<Loaded<WaiverView>> {
@@ -231,10 +256,19 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     const horizon = await horizonFor(reader, ref, league, week, [...roster.players, ...available]);
     const horizonById = horizonValues(mine, pool, horizon, league.rosterSettings);
     const reach = (c: WaiverCandidate) => horizonById.get(c.player.gsisId)?.total ?? 0;
+    const trendById: Record<string, Trend> = {};
+    for (const p of available) {
+      if (p.percentChange !== undefined) trendById[p.platformPlayerId] = { change: p.percentChange, rostered: p.percentOwned ?? 0 };
+    }
+    const changeOf = new Map(Object.entries(trendById).map(([id, t]) => [id, t.change]));
     const candidates = [
       ...new Set([
         ...ranked.slice(0, 40),
         ...[...ranked].sort((a, b) => reach(b) - reach(a) || b.lineupGain - a.lineupGain).slice(0, 40),
+        // The most added across ESPN, for the trending view: likely streamers.
+        ...ranked.filter((c) => (changeOf.get(c.player.gsisId) ?? 0) >= TRENDING_MIN)
+          .sort((a, b) => changeOf.get(b.player.gsisId)! - changeOf.get(a.player.gsisId)!)
+          .slice(0, 25),
       ]),
     ];
     const droppable = new Set(roster.players.filter((p) => p.currentSlot !== 'IR').map((p) => p.platformPlayerId));
@@ -261,6 +295,18 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
         });
       }),
     );
+    // Playing for the win: the same week's lineup plan, with locks and scores so far.
+    const plan = isFuture || week === league.currentWeek ? await planLineup(connKey, week) : null;
+    const ceiling = plan ? await ceilingView(plan, pool, available) : null;
+
+    // Dropping and bidding need your own roster and, in FAAB leagues, what is left of the budget.
+    const teams = league.faabBudget > 0 ? await reader.getTeams(ref).catch(() => []) : [];
+    const myTeam = teams.find((t) => t.isMine);
+    const faab =
+      league.faabBudget > 0
+        ? { budget: league.faabBudget, remaining: Math.max(0, league.faabBudget - (myTeam?.faabSpent ?? 0)) }
+        : null;
+
     const pickupById: Record<string, 'free-agent' | 'waivers'> = {};
     const proTeamById: Record<string, string | null> = {};
     for (const p of available) {
@@ -286,6 +332,15 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
       horizonWeeks: horizon.weeks,
       horizonById: Object.fromEntries(horizonById),
       dropById,
+      trendById,
+      ceiling,
+      myRoster: roster.players.map((p) => ({
+        id: p.platformPlayerId,
+        name: p.name,
+        position: p.position,
+        locked: p.locked && !isFuture,
+      })),
+      faab,
     };
   });
 }
@@ -317,6 +372,7 @@ function availablePlayers(
           webPick: picked.has(p.platformPlayerId),
           opening: openings.has(p.platformPlayerId) ? openedRoleNote(openings.get(p.platformPlayerId)!, p.position) : null,
           horizonGain: horizonById.get(p.platformPlayerId)?.total ?? 0,
+          rosteredChange: p.percentChange ?? null,
         },
       ];
     })
@@ -422,13 +478,14 @@ export interface PlayerEvaluation {
     readonly factor: number;
     readonly pricedByMarket: boolean;
   } | null;
-  /** The NFL opponent's defense and how it moved the projection; null when matchups are off or unknown. */
+  /** A D/ST's opponent, how D/STs have scored against it over their projections, and how that moved the projection; null otherwise. */
   readonly matchup: {
     readonly opponent: string;
     readonly home: boolean;
-    readonly allowed: number;
-    readonly average: number;
+    readonly ratio: number;
     readonly rank: number;
+    readonly teams: number;
+    readonly games: number;
     readonly factor: number;
     readonly pricedByMarket: boolean;
   } | null;
@@ -600,9 +657,10 @@ export function evaluatePlayer(
           ? {
               opponent: target!.matchup.opponent,
               home: target!.matchup.home,
-              allowed: target!.matchup.allowed,
-              average: target!.matchup.average,
+              ratio: target!.matchup.ratio,
               rank: target!.matchup.rank,
+              teams: target!.matchup.teams,
+              games: target!.matchup.games,
               factor: target!.matchup.factor,
               pricedByMarket: target!.matchup.pricedByMarket,
             }
@@ -876,6 +934,87 @@ export interface SettingsView {
   readonly rosterSettings: RosterSettings;
   readonly scoring: readonly ScoringRow[];
   readonly scoredRuleCount: number;
+}
+
+/** Weeks the roster planner looks ahead, the week shown included. */
+export const PLAN_WEEKS = 6;
+
+export interface SeasonWeek {
+  readonly week: number;
+  /** Starting slots the roster cannot fill that week. */
+  readonly short: readonly string[];
+  /** Players on bye or out that week. */
+  readonly missing: readonly { readonly name: string; readonly reason: string }[];
+  /** The best lineup the roster could field, on rest-of-season rates. */
+  readonly projected: number;
+  /** The best available player for each hole, if one plays that week. */
+  readonly covers: readonly {
+    readonly slot: string;
+    readonly name: string;
+    readonly position: string;
+    readonly perGame: number;
+    readonly pickup: 'free-agent' | 'waivers';
+  }[];
+}
+
+export interface SeasonView {
+  readonly weeks: readonly SeasonWeek[];
+  /** The week the plan starts from. */
+  readonly from: number;
+  /** Playoff odds for every team; null when the league does not publish playoff settings. */
+  readonly odds: SeasonOddsView | null;
+}
+
+/** The coming weeks: where byes and injuries leave the roster short, and who could cover. */
+export function loadSeason(key?: string | null, requestedWeek?: number | null): Promise<Loaded<SeasonView>> {
+  return load(key, async (reader, ref, league, connKey) => {
+    const { week } = await weekFor(reader, ref, league, connKey, requestedWeek);
+    const [roster, pool] = await Promise.all([reader.getRoster(ref, week), reader.getFreeAgentPool(ref, week)]);
+    const horizon = await horizonFor(reader, ref, league, week, [...roster.players, ...pool], PLAN_WEEKS);
+
+    const coveragePlayer = (p: RosterPlayer) => ({
+      gsisId: p.platformPlayerId,
+      name: p.name,
+      position: p.position,
+      eligibleSlots: p.eligibleSlots,
+      perGame: horizon.outlooks.get(p.platformPlayerId)?.perGame ?? p.projectedPoints,
+      // An IR player cannot be started at all.
+      available: p.available && p.currentSlot !== 'IR',
+      ...(p.unavailableReason ? { unavailableReason: p.unavailableReason } : {}),
+      offWeeks: horizon.outlooks.get(p.platformPlayerId)?.offWeeks ?? new Set<number>(),
+    });
+
+    const mine = roster.players.map(coveragePlayer);
+    const free = pool.filter((p) => p.pickup).map((p) => ({ ...coveragePlayer(p), pickup: p.pickup! }));
+    const weeks = coverageByWeek(mine, horizon.weeks, league.rosterSettings).map((w) => ({
+      week: w.week,
+      short: w.short.map(String),
+      missing: w.missing,
+      projected: w.projected,
+      covers: [...new Set<LineupSlot>(w.short)].flatMap((slot) => {
+        const best = free
+          .filter((f) => f.available && !f.offWeeks.has(w.week) && (f.eligibleSlots ?? []).includes(slot))
+          .sort((a, b) => b.perGame - a.perGame)[0];
+        return best
+          ? [{ slot: String(slot), name: best.name, position: best.position, perGame: round1(best.perGame), pickup: best.pickup }]
+          : [];
+      }),
+    }));
+    const odds = await seasonOdds(reader, ref, league, week).catch(() => null);
+    return { weeks, from: week, odds };
+  });
+}
+
+export interface ReviewView {
+  /** Every finished week recorded for this league, oldest first. */
+  readonly weeks: readonly WeekResults[];
+}
+
+/** The recorded weeks behind the review page; recording any missing week first. */
+export function loadReview(key?: string | null): Promise<Loaded<ReviewView>> {
+  return load(key, async (reader, ref, league, connKey) => ({
+    weeks: await reviewWeeks(reader, ref, league, connKey),
+  }));
 }
 
 export function loadSettings(key?: string | null): Promise<Loaded<SettingsView>> {

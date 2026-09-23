@@ -61,7 +61,7 @@ export async function playerNewsReadAction(key: string, week: number, id: string
   } catch (error) {
     return { ok: false, message: messageOf(error) };
   }
-  if (!provider) return { ok: false, message: 'Reading the news needs an AI provider. Turn one on under Connect a league.' };
+  if (!provider) return { ok: false, message: 'Reading the news needs an AI provider. Turn one on under Settings.' };
 
   const forWeek = Number.isInteger(week) ? week : null;
   const inputs = await playerNewsInputs(key, forWeek, id, aiSettings().ollamaApiKey);

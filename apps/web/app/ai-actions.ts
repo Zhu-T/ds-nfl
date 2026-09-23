@@ -122,7 +122,7 @@ function resolveProvider(): LlmProvider | AiResult {
     return (
       currentProvider() ?? {
         ok: false,
-        message: 'AI explanations are off. Turn them on under Connect a league.',
+        message: 'AI explanations are off. Turn them on under Settings.',
       }
     );
   } catch (error) {

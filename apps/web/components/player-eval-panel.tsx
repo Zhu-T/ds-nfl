@@ -10,7 +10,7 @@ import {
   type NewsReadResult,
   type WebNewsResult,
 } from '@/app/waivers/evaluate-actions';
-import { matchupLabel } from '@/lib/matchup-label';
+import { matchupSentence } from '@/lib/matchup-label';
 import { formLabel } from '@/lib/form-label';
 
 const pts = (n: number) => n.toFixed(1);
@@ -92,10 +92,8 @@ export function PlayerEvalPanel({
         <div>
           <h3 className="webnews__title">Evaluate a player</h3>
           <p className="field__hint">
-            Anyone in the league, rostered or not: what they would add to your best lineup for week{' '}
-            {week}, or what one of yours is worth to it, with their matchup, injured teammates, and the
-            last week of news on them from the web
-            {aiEnabled ? `, which ${providerLabel} reads for anything that changes their outlook` : ''}.
+            Anyone in the league: what they would add to your lineup in week {week}, or what one of yours
+            is worth, with recent news{aiEnabled ? ` read by ${providerLabel}` : ''}.
           </p>
         </div>
       </div>
@@ -232,8 +230,7 @@ function Evaluation({
           )}
           {e.matchup && (
             <li>
-              {matchupLabel(e.matchup, e.position)}; that defense allows {pts(e.matchup.allowed)} per game, against a
-              league average of {pts(e.matchup.average)}
+              {matchupSentence(e.matchup, e.position)}
             </li>
           )}
           {e.form && <li>{formLabel(e.form)}, against {pts(e.espnProjection)} projected</li>}
@@ -338,7 +335,7 @@ function WebNews({
           {aiEnabled && result.news.items.length > 0 && <NewsRead e={e} read={read} reading={reading} providerLabel={providerLabel} />}
           {!aiEnabled && result.news.items.length > 0 && (
             <p className="field__hint">
-              Turn on AI under Connect a league to have these read for anything that changes their outlook.
+              Turn on AI under Settings to have these read for anything that changes their outlook.
             </p>
           )}
         </>

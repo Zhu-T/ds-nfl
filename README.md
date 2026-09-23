@@ -65,7 +65,7 @@ docs/                reverse-engineered ESPN protocol notes
 
 ## Connecting leagues
 
-Connect as many ESPN leagues as you like under **Connect a league**. One is active at a
+Connect as many ESPN leagues as you like under **Settings**. One is active at a
 time, and every page shows it; switch from the sidebar or the Connect page. Each league
 keeps its own AI conversation.
 
@@ -115,7 +115,31 @@ for the week shown: the optimizer runs with the player added, and the difference
 value.
 
 - The players considered are the 150 best projected for that week plus the 50 most
-  rostered.
+  rostered, plus the 40 being added most across ESPN.
+- **Trending adds** ranks available players by ESPN's rostered +/-: the change in the
+  percent of ESPN leagues rostering them. These are likely streamers, often before their
+  projection catches up. Each still shows what they would add to your lineup this week.
+  Elsewhere a rise of a quarter-point or more is shown beside the player. The League AI's list
+  of available players includes the 8 most-added. Snapshots and the results export record
+  each player's rostered percent and change.
+- **High ceiling** ranks pickups by how much each raises your **chance of winning this
+  week's matchup**, for when a loss looks likely and a boom game is what you need.
+  - **Win chance.** Both starting lineups are priced with the app's projections. Each starter
+    gets the spread typical for their position and projection. Games already over count at
+    their actual score.
+  - **Ceiling.** The score a player beats one week in ten.
+  - **Simplifications.** Players are treated as independent and scores as bell curves.
+  - **Tested.** `npm run calibrate-ceilings` fits on 2024 and checks on 2025. 9.5% of
+    player-weeks beat the ceiling. Three extra signals were tested the same way, and none
+    helped enough to use:
+    - a player's own boom history: past boom rates of 1% to 23% gave 9.1% to 10.0% the
+      next week;
+    - their coefficient of variation;
+    - the implied team total.
+- **Upside lineup** on the Lineup page is off by default. Switched on, it shows the lineup with
+  the best chance of winning next to the best-projected one, with both chances. It has its
+  own Apply, which recomputes that lineup on the server. It never replaces the main lineup
+  or its Apply.
 - **This week or through week N.** A switch ranks by this week's gain or by the running
   total from this week through the three after it ("Through week 5" in week 2). Later weeks use ESPN's rest-of-season projection
   per game and each NFL team's bye weeks, so a player who would sit now but covers a bye or
@@ -197,11 +221,11 @@ one moves a little toward what the player has actually scored this season, under
 league's scoring. The numbers come from the same ESPN reads as the projections, so this
 costs no extra request.
 
-- As with matchups, the adjustment is cautious: a player's own games count as much as three
+- Like the opponent adjustment, this one is cautious: a player's own games count as much as three
   games of their projection, so after one game only a quarter of the difference counts; half
   of what remains is applied; and the change is capped at 10% either way.
 - A player with betting lines blended in is left to the market, which prices form better.
-- Order: ESPN's projection, betting lines, the NFL matchup, recent form, then any news
+- Order: ESPN's projection, betting lines, the opponent (D/STs), recent form, then any news
   finding. Player cards show it, e.g. "form: 30.1 a game over 1 game, ×1.10", and the AIs
   are told what each player has actually scored.
 
@@ -214,20 +238,28 @@ projection often already reflects the injury. Instead it is handed to the models
 check reads it with each player (and also checks up to four waiver backups whose lead is
 out), and may report a bigger role, citing the news, within its fixed range.
 
-**NFL matchups.** On by default, with its own switch on the lineup page. Each player's
-projection moves a little toward how many fantasy points their opponent's defense allows to
-their position this season, from ESPN's own matchup data (points allowed per game and rank,
-under your league's scoring) and the NFL schedule.
+**Opponents.** On by default, with a switch on the Lineup page. Only **D/ST** projections
+move with the opponent. Each moves toward how D/STs have scored against that offense this
+season, relative to their own ESPN projections, from finished weeks only.
 
-- ESPN's projection is already made for that game, so the adjustment is cautious, to avoid
-  counting the opponent twice. A defense's average counts as much as four games of league
-  average, so one game of results carries a fifth of its weight. Half of what remains is
-  applied, and never more than 10% either way.
-- A player whose projection already blends in betting lines is left as it is: the market has
-  priced the opponent.
-- Order: ESPN's projection, betting lines, the matchup, then any news finding. The lineup,
-  waivers, trades, player evaluation, and the League AI brief all use it. Each player card
-  shows the matchup, e.g. "@ HOU: 3rd-most pts to QBs, ×1.04".
+- **Measured against projections, not points allowed.** A defense that has faced strong
+  offenses allows more points without being any weaker. ESPN's opponent rank (OPRK) and
+  points allowed don't account for that. What players scored beyond their own projection is
+  what the projections missed about the opponent, with each offense's quality already
+  counted.
+- **Why only D/STs.** `npm run backtest-opponents` replays a past season from ESPN's public
+  data. Every player-week from week 2 on is projected using only earlier weeks. In both 2024
+  and 2025:
+  - moving D/ST projections this way cut squared error by 1.6% and 2.5%;
+  - for every offensive position, any opponent adjustment made ESPN's projection worse.
+    Points allowed was the worst, at up to 1.8%; ESPN already prices the opponent.
+  - So QBs, RBs, WRs, TEs and kickers keep ESPN's projection.
+- **Sizing.** An offense's record counts as much as four ordinary games, so one game carries
+  a fifth of its weight. The change is never more than 20% either way.
+- **Order:** ESPN's projection, betting lines, the opponent, recent form, then any news
+  finding. The lineup, waivers, trades, player evaluation and the League AI brief all use
+  it, e.g. "@ ATL: D/STs 164% over projection vs them, ×1.20".
+- **Streamers at other positions:** see Trending adds under Waivers.
 
 **Next week.** While a week is being played, the week switch in the top bar plans the next
 one: its lineup (nothing is locked yet), the matchup against next week's opponent (whose
@@ -273,6 +305,45 @@ removing findings saves at once and does not run the check again. A check only r
 when clicked. With Claude it is billed to your Anthropic account (web searches plus tokens).
 With the local model it is free, and takes a few minutes.
 
+### How it's doing
+
+A page grading the app against what happened, from the weekly results below. Only players
+priced **before kickoff** count, so nothing is scored with hindsight.
+
+- Each week: what you scored, what the recommended lineup would have, the best possible, and
+  what the bench outscored the lineup by.
+- Each adjustment judged **on its own**: the projection that went out against the same
+  projection with that one factor removed. Betting lines are compared with ESPN's number;
+  the opponent and form factors are divided back out. Under 40 player-weeks it says "too
+  early to tell" rather than showing a number.
+- News findings by direction, web picks against everyone available at their position, and how
+  often players beat their ceiling (one in ten is right).
+
+If an adjustment is shown to make projections worse over enough weeks, it should be switched
+off by default, as ESPN's opponent ranks were.
+
+### Coming weeks and playoff odds
+
+- **Playoff odds** play the rest of the season out 10,000 times. Each team scores what its
+  best lineup projects from here on, with the spread its players carry; seeding is by record
+  with points for as the tiebreak, as ESPN does it. It also shows which remaining week swings
+  your odds most. The week being played is simulated fresh, so live scores do not count
+  toward it, and nobody's future pickups are guessed at.
+- **Coming weeks** shows where byes and injuries leave you short of a full lineup over the
+  next six weeks, with the best available player who does play that week for each hole.
+
+### Adding and dropping
+
+Waiver rows have an **Add** (or **Claim**) button. It asks who to drop, and in leagues with a
+FAAB budget what to bid, then writes through the same transactions endpoint lineups use.
+
+- Nothing is written without that confirmation, and the app never acts on its own.
+- The server checks everything again: that the player is still available, that the drop is
+  on your roster, and that their game has not started.
+- A free agent is added at once and confirmed by reading the roster back. A waiver claim is
+  reported as **submitted**, never as done: ESPN settles it at the next waiver run.
+- The suggested bid is a stated rule of thumb, not a fitted model.
+
 ### Weekly results
 
 The app records every week, so it can be checked against what happened and the data can
@@ -297,7 +368,7 @@ folder: `npm run export-results -- "%APPDATA%\ds-nfl"`.
 ## AI explanations (optional)
 
 Off by default, and optional in the strongest sense: with it off, every number and
-recommendation in the app is identical. Turn it on under **Connect a league**.
+recommendation in the app is identical. Turn it on under **Settings**.
 
 - **Claude** (`claude-opus-5` at low effort, with Anthropic's server-side refusal
   fallback) needs an API key, which is checked with a free request before it is saved.

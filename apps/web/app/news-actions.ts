@@ -47,7 +47,7 @@ export async function checkWebNews(key: string, week: number): Promise<NewsCheck
     return fail(error);
   }
   if (!provider) {
-    return { ok: false, message: 'Checking news needs an AI provider. Turn one on under Connect a league.' };
+    return { ok: false, message: 'Checking news needs an AI provider. Turn one on under Settings.' };
   }
 
   let plan;

@@ -12,6 +12,7 @@ import 'server-only';
 import {
   mergeSnapshot,
   readNewsReport,
+  listWeekResults,
   readSnapshot,
   readWebPicks,
   readWeekResults,
@@ -23,8 +24,9 @@ import {
   type PlayerSnapshot,
   type ResultOwnerKind,
   type RosterPlayer,
+  type WeekResults,
 } from '@ds-nfl/adapters';
-import type { OptimizerPlayer } from '@ds-nfl/core';
+import { spreadFor, type OptimizerPlayer } from '@ds-nfl/core';
 import { summarizeWeek } from './results-summary';
 
 /** A page's snapshot is rewritten at most this often, unless its set of players changes. */
@@ -50,6 +52,9 @@ export function snapshotRow(
     ...(p.matchup ? { matchupFactor: p.matchup.factor } : {}),
     ...(p.form ? { formFactor: p.form.factor } : {}),
     ...(p.news ? { news: { status: p.news.status, factor: p.news.factor } } : {}),
+    ...spreadFor(p.position, p.projectedPoints),
+    ...(rp?.percentOwned !== undefined ? { rostered: rp.percentOwned } : {}),
+    ...(rp?.percentChange !== undefined ? { rosteredChange: rp.percentChange } : {}),
     ...(extra.slot !== undefined ? { slot: extra.slot } : {}),
     ...(extra.gain !== undefined ? { gain: extra.gain } : {}),
     ...(extra.horizonGain !== undefined ? { horizonGain: extra.horizonGain } : {}),
@@ -123,4 +128,13 @@ async function weekResults(reader: EspnReader, ref: LeagueRef, league: LeagueInf
     })),
     pickedIds: new Set((picks?.picks ?? []).flatMap((p) => (p.playerId ? [p.playerId] : []))),
   });
+}
+
+/**
+ * Every recorded week for a league, oldest first, with any finished week that
+ * has no results yet recorded first. For the review page.
+ */
+export async function reviewWeeks(reader: EspnReader, ref: LeagueRef, league: LeagueInfo, key: string): Promise<WeekResults[]> {
+  await recordCompletedWeeks(reader, ref, league, key);
+  return listWeekResults().filter((r) => r.leagueKey === key);
 }

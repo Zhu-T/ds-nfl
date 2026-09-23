@@ -145,6 +145,10 @@ export class SleeperReader implements LeagueReader {
       // Sleeper does not publish the season's last scoring week directly; 18 is
       // the NFL's last week, so planning ahead never runs past the season.
       finalWeek: 18,
+      // Sleeper's playoff settings are not read yet, so the season simulation stays ESPN-only.
+      playoffTeamCount: 0,
+      regularSeasonWeeks: 14,
+      faabBudget: 0,
     };
   }
 

@@ -36,6 +36,12 @@ export interface PlayerSnapshot {
   readonly matchupFactor?: number;
   readonly formFactor?: number;
   readonly news?: { readonly status: string; readonly factor: number };
+  /** The week's spread and ceiling (90th percentile) the app used; see core/ceiling/spread.ts. */
+  readonly sd?: number;
+  readonly ceiling?: number;
+  /** Percent of ESPN leagues rostering them, and ESPN's rostered +/-, when captured. */
+  readonly rostered?: number;
+  readonly rosteredChange?: number;
   /** Your players: the recommended slot, "BENCH" when not starting. */
   readonly slot?: string;
   /** Pickups: points added to your best lineup this week, and across the coming weeks. */

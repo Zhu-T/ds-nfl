@@ -18,7 +18,9 @@
     "dev": "npm run dev --workspace=@ds-nfl/web",
     "build": "npm run build --workspace=@ds-nfl/web",
     "start": "npm run start --workspace=@ds-nfl/web",
-    "export-results": "vite-node scripts/export-results.ts"
+    "export-results": "vite-node scripts/export-results.ts",
+    "backtest-opponents": "vite-node scripts/backtest-opponents.ts",
+    "calibrate-ceilings": "vite-node scripts/calibrate-ceilings.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

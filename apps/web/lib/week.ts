@@ -48,6 +48,7 @@ import { openingsAmong } from './depth';
 import { formEnabled, formInputs } from './form';
 import { readWeekResults } from '@ds-nfl/adapters';
 import { recordCompletedWeeks, recordSnapshot, snapshotRow } from './results';
+import { priceOpponent, upsideEnabled, upsideView, type UpsideView } from './upside';
 
 export interface MatchupView {
   readonly opponentName: string;
@@ -108,6 +109,8 @@ export interface WeekView {
   readonly openings: Readonly<Record<string, OpenedRole>>;
   /** Whether a player's own scoring this season is shaping projections. */
   readonly form: { readonly enabled: boolean };
+  /** Whether the upside lineup switch is on, and, when on, the lineup with the best chance of winning. */
+  readonly upside: { readonly enabled: boolean; readonly view: UpsideView | null };
   /** Last week as played, once recorded: your set lineup, the recommended one, and the best possible. */
   readonly lastResult: {
     readonly week: number;
@@ -271,6 +274,8 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
     });
 
     const matchup = rawMatchup ? await matchupView(plan, rawMatchup, currentPoints) : null;
+    const upsideOn = await upsideEnabled();
+    const upside = { enabled: upsideOn, view: upsideOn ? await upsideView(plan) : null };
     const lockedCount = isFuture ? 0 : plan.roster.filter((p) => p.locked).length;
 
     const games: Record<string, GameLine> = {};
@@ -313,6 +318,7 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
       openings: Object.fromEntries(plan.openings),
       form: { enabled: plan.formOn },
       lastResult: last?.lineup ? { week: last.week, ...last.lineup } : null,
+      upside,
       games,
     };
   } catch (e) {
@@ -343,27 +349,7 @@ async function matchupView(plan: LineupPlan, raw: Matchup, currentPoints: number
 
   if (plan.isFuture) {
     const theirs = await plan.reader.getRoster({ ...plan.ref, teamId: raw.opponentTeamId }, plan.week);
-    const best = optimizeLineup(
-      applyForm(
-        applyMatchups(
-          theirs.players.map((p) => {
-          const m = adjustFor(plan.market, p);
-          return {
-            gsisId: p.platformPlayerId,
-            name: p.name,
-            position: p.position,
-            eligibleSlots: p.eligibleSlots,
-            projectedPoints: m?.blended ?? p.projectedPoints,
-            available: p.available,
-              ...(m ? { market: m } : {}),
-            };
-          }),
-          matchupInputs(plan.matchups, theirs.players),
-        ),
-        formInputs(theirs.players, plan.formOn),
-      ),
-      plan.league.rosterSettings,
-    );
+    const best = optimizeLineup(priceOpponent(plan, theirs.players), plan.league.rosterSettings);
     opponentProjected = round1(best.projectedPoints);
     opponentBasis = 'best';
   }
@@ -457,6 +443,7 @@ function sampleView(error: string | null): WeekView {
     openings: {},
     form: { enabled: false },
     lastResult: null,
+    upside: { enabled: false, view: null },
     games: {},
   };
 }

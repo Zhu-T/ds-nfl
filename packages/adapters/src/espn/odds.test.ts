@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { EspnReader } from './adapter.js';
 import { clearOddsCache, fetchWeekOdds, parsePropBets, parseScoreboardOdds } from './odds.js';
 import { activeLeague } from '../credentials.js';
 
@@ -106,8 +107,29 @@ describe('fetchWeekOdds', () => {
 const suite = activeLeague() ? describe : describe.skip;
 suite('ESPN odds (live)', () => {
   it('has lines for every game of a regular-season week and props keyed by athlete id', async () => {
-    const odds = await fetchWeekOdds(2026, 2);
+    // The current week: the scoreboard drops lines once a game is final, so a fixed past week stops having any.
+    const espn = activeLeague()!;
+    const ref = { platform: 'espn' as const, leagueId: espn.leagueId, season: espn.season, teamId: espn.teamId };
+    const league = await new EspnReader({ espnS2: espn.espnS2, swid: espn.swid }).getLeague(ref);
+    const odds = await fetchWeekOdds(league.season, league.currentWeek + 1);
     expect(odds.teams.size).toBeGreaterThan(0);
     for (const t of odds.teams.values()) expect(Number.isFinite(t.impliedPoints)).toBe(true);
   }, 60_000);
+});
+
+describe('parseGameStatus', () => {
+  it("reads each team's game as upcoming, live, or final", async () => {
+    const { parseGameStatus } = await import('./odds.js');
+    const game = (state: string, home: string, away: string) => ({
+      status: { type: { state } },
+      competitions: [{ competitors: [{ homeAway: 'home', team: { abbreviation: home } }, { homeAway: 'away', team: { abbreviation: away } }] }],
+    });
+    const status = parseGameStatus({ events: [game('post', 'KC', 'BUF'), game('in', 'DET', 'GB'), game('pre', 'LAR', 'SF'), game('postponed', 'NYJ', 'MIA')] });
+    expect(status.get('KC')).toBe('final');
+    expect(status.get('BUF')).toBe('final');
+    expect(status.get('GB')).toBe('live');
+    expect(status.get('SF')).toBe('upcoming');
+    expect(status.get('MIA')).toBe('upcoming');
+    expect(status.has('CHI')).toBe(false);
+  });
 });

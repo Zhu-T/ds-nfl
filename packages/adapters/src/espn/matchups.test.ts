@@ -1,30 +1,27 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { gamesBefore, parsePositionalRatings, parseProSchedule } from './matchups.js';
+import { gamesBefore, opponentGames, parseProSchedule } from './matchups.js';
+import type { RosterPlayer } from '../types.js';
 import { EspnReader, clearScheduleCache } from './adapter.js';
 
 const ref = { platform: 'espn' as const, leagueId: '1', season: 2026, teamId: '1' };
 
-describe('parsePositionalRatings', () => {
-  it('reads points allowed per position and defense, with the rank, keyed by team', () => {
-    const ratings = parsePositionalRatings({
-      positionAgainstOpponent: {
-        positionalRatings: {
-          '1': { average: 18.59, ratingsByOpponent: { '34': { average: 36.84, rank: 30 }, '4': { average: 11.64, rank: 7 } } },
-          '16': { average: 6.1, ratingsByOpponent: { '29': { average: 9, rank: 25 } } },
-          '99': { average: 1, ratingsByOpponent: {} },
-        },
-      },
+describe('opponentGames', () => {
+  it('pairs each finished game with the opponent faced that week, skipping byes and unplayed games', () => {
+    const schedule = { weeks: new Map([[1, new Map([['HOU', { opponent: 'LAR', home: false }]])]]) };
+    const dst = (proTeam: string, actual?: number): RosterPlayer => ({
+      platformPlayerId: proTeam,
+      name: `${proTeam} D/ST`,
+      position: 'DST',
+      eligibleSlots: ['DST'],
+      currentSlot: 'BENCH',
+      projectedPoints: 5.3,
+      available: true,
+      proTeam,
+      locked: false,
+      ...(actual !== undefined ? { actualPoints: actual } : {}),
     });
-    expect(ratings.get('QB')?.average).toBe(18.59);
-    expect(ratings.get('QB')?.byOpponent.get('HOU')).toEqual({ allowed: 36.84, rank: 30 });
-    expect(ratings.get('QB')?.byOpponent.get('CIN')).toEqual({ allowed: 11.64, rank: 7 });
-    expect(ratings.get('DST')?.byOpponent.get('CAR')).toEqual({ allowed: 9, rank: 25 });
-    expect(ratings.size).toBe(2);
-  });
-
-  it('reads nothing from an unexpected shape', () => {
-    expect(parsePositionalRatings(null).size).toBe(0);
-    expect(parsePositionalRatings({ positionAgainstOpponent: {} }).size).toBe(0);
+    const games = opponentGames(schedule, new Map([[1, [dst('HOU', -4), dst('KC', 9), dst('HOU')]]]));
+    expect(games).toEqual([{ week: 1, position: 'DST', opponent: 'LAR', actual: -4, projected: 5.3 }]);
   });
 });
 
@@ -53,20 +50,42 @@ describe('EspnReader matchup reads', () => {
     clearScheduleCache();
   });
 
-  it("reads the week's ratings from the league, and the season schedule once across readers", async () => {
-    const urls: string[] = [];
-    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
-      urls.push(String(input));
-      const body = String(input).includes('proTeamSchedules')
+  it('reads every D/ST for a week in one call, and the season schedule once across readers', async () => {
+    const calls: { url: string; filter: any }[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, filter: JSON.parse((init?.headers as Record<string, string> | undefined)?.['x-fantasy-filter'] ?? 'null') });
+      const body = url.includes('proTeamSchedules')
         ? { settings: { proTeams: [] } }
-        : { positionAgainstOpponent: { positionalRatings: {} } };
+        : {
+            players: [
+              {
+                status: 'FREEAGENT',
+                player: {
+                  id: -16034,
+                  fullName: 'Texans D/ST',
+                  defaultPositionId: 16,
+                  proTeamId: 34,
+                  eligibleSlots: [16],
+                  stats: [
+                    { seasonId: 2026, statSourceId: 1, statSplitTypeId: 1, scoringPeriodId: 1, appliedTotal: 5.3 },
+                    { seasonId: 2026, statSourceId: 0, statSplitTypeId: 1, scoringPeriodId: 1, appliedTotal: -4 },
+                  ],
+                },
+              },
+            ],
+          };
       return new Response(JSON.stringify(body));
     });
 
-    await new EspnReader({ espnS2: 's', swid: '{w}' }).getPositionalRatings(ref, 2);
+    const [dst] = await new EspnReader({ espnS2: 's', swid: '{w}' }).getDefenseWeek(ref, 1);
+    expect(dst).toMatchObject({ name: 'Texans D/ST', position: 'DST', proTeam: 'HOU', projectedPoints: 5.3, actualPoints: -4 });
+    const kona = calls.find((c) => c.url.includes('kona_player_info'))!;
+    expect(kona.url).toContain('scoringPeriodId=1');
+    expect(kona.filter.players).toMatchObject({ filterSlotIds: { value: [16] }, limit: 40 });
+
     await new EspnReader({ espnS2: 's', swid: '{w}' }).getProSchedule(ref);
     await new EspnReader({ espnS2: 's', swid: '{w}' }).getProSchedule(ref);
-    expect(urls.filter((u) => u.includes('leagues/1?view=mPositionalRatings&scoringPeriodId=2'))).toHaveLength(1);
-    expect(urls.filter((u) => u.endsWith('seasons/2026?view=proTeamSchedules_wl'))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith('seasons/2026?view=proTeamSchedules_wl'))).toHaveLength(1);
   });
 });
