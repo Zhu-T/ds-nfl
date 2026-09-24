@@ -2106,3 +2106,41 @@ form.weektoggle {
   font-size: 0.7rem;
   color: var(--text-dim);
 }
+
+/* ---------- outcome tags (Pending) ---------- */
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.tag--good {
+  color: var(--gain);
+  background: color-mix(in srgb, var(--gain) 12%, transparent);
+}
+
+.tag--bad {
+  color: var(--loss);
+  background: color-mix(in srgb, var(--loss) 12%, transparent);
+}
+
+.tag--warn {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tag--wait {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.tag--muted {
+  color: var(--text-dim);
+}

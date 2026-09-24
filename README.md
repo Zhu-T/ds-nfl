@@ -383,7 +383,11 @@ Confirming writes through the same transactions endpoint lineups use.
 **Pending** is its own page. Every move reads the same way: one line per player, **IN** in
 green with where they come from, **OUT** in red with where they go — "Tre Tucker (WR · LV) ←
 from jahmyr GIBBY", "Davante Adams (WR · LAR) → to jahmyr GIBBY". So which way a player is
-going, and between whom, never has to be read out of a sentence. The page holds what you have
+going, and between whom, never has to be read out of a sentence. How each move ended is a
+coloured tag — **accepted** and **went through** in green, **declined** in red, **failed** in
+amber with ESPN's reason in English ("another team claimed the player first"), **cancelled**
+and **closed** in grey, **waiting** and **your call** in the app's yellow — and the card's
+edge takes the same colour, so a list scans by outcome. The page holds what you have
 put in and not yet had settled, **trades another manager has offered you**, when the waivers
 run in your league, and how your last few moves actually ended — went through, cancelled, or
 failed, with ESPN's reason. Waivers links to it, marks a player you have already claimed as

@@ -14,18 +14,51 @@ const TITLE: Record<PendingRow['kind'], string> = {
   other: 'Move',
 };
 
-const OUTCOME: Record<Exclude<PendingRow['status'], 'pending'>, string> = {
-  executed: 'went through',
-  canceled: 'cancelled',
-  failed: 'failed',
+/** The tag that carries how a move ended, or that it has not. */
+type Tone = 'good' | 'bad' | 'warn' | 'muted' | 'wait';
+
+function outcomeTag(row: PendingRow): { label: string; tone: Tone } {
+  if (row.answered) {
+    return row.answered === 'accepted' ? { label: 'accepted', tone: 'good' } : { label: 'declined', tone: 'bad' };
+  }
+  switch (row.status) {
+    case 'executed':
+      return { label: 'went through', tone: 'good' };
+    case 'canceled':
+      return { label: 'cancelled', tone: 'muted' };
+    case 'failed':
+      return { label: 'failed', tone: 'warn' };
+    default:
+      return { label: 'waiting', tone: 'wait' };
+  }
+}
+
+/** ESPN's failure codes, in English. Anything unknown is shown as ESPN wrote it. */
+const WHY_FAILED: Readonly<Record<string, string>> = {
+  INVALIDPLAYERSOURCE: 'another team claimed the player first',
+  PLAYERALREADYDROPPED: 'the player had already been dropped',
+  PLAYERALREADYROSTERED: 'the player was already on a roster',
+  ROSTERFULL: 'your roster was full',
+  INVALIDPLAYERDESTINATION: 'the player could not be placed',
 };
 
-/** "Trade with jahmyr GIBBY declined", "Waiver claim went through". */
-function outcomeLine(row: PendingRow): string {
-  const what = row.kind === 'trade' ? `Trade with ${row.counterparty}` : TITLE[row.kind];
-  if (row.answered) return `${what} ${row.answered === 'accepted' ? 'accepted' : 'declined'}`;
-  return `${what} ${OUTCOME[row.status as Exclude<PendingRow['status'], 'pending'>]}`;
+/** What the move was, without the outcome: the tag says that. */
+function moveName(row: PendingRow): string {
+  return row.kind === 'trade' ? `Trade with ${row.counterparty}` : TITLE[row.kind];
 }
+
+function Tag({ label, tone }: { label: string; tone: Tone }) {
+  return <span className={`tag tag--${tone}`}>{label}</span>;
+}
+
+/** The card's edge takes the tag's colour, so a list scans by outcome. */
+const EDGE: Record<Tone, string> = {
+  good: 'var(--gain)',
+  bad: 'var(--loss)',
+  warn: 'var(--accent)',
+  wait: 'var(--accent)',
+  muted: 'var(--border-strong)',
+};
 
 function when(at: string | null): string {
   if (!at) return '';
@@ -105,6 +138,7 @@ export default async function PendingPage() {
                   {offers.map((row) => (
                     <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--pos-wr)' }}>
                       <div className="movehead">
+                        <Tag label="your call" tone="wait" />
                         <span className="movehead__who">{proposedBy(row)}</span>
                         <span>
                           week {row.week}
@@ -133,6 +167,7 @@ export default async function PendingPage() {
                   {claims.map((row) => (
                     <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--accent)' }}>
                       <div className="movehead">
+                        <Tag {...outcomeTag(row)} />
                         <span className="movehead__who">{proposedBy(row)}</span>
                         <span>
                           {TITLE[row.kind]} · week {row.week}
@@ -157,8 +192,9 @@ export default async function PendingPage() {
                   {stale.map((row) => (
                     <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
                       <div className="movehead">
+                        <Tag label="closed" tone="muted" />
                         <span>
-                          {row.kind === 'trade' ? `Trade with ${row.counterparty}` : TITLE[row.kind]} · week {row.week}
+                          {moveName(row)} · week {row.week}
                           {row.at ? ` · ${when(row.at)}` : ''} ·{' '}
                           {row.answered
                             ? `already ${row.answered}`
@@ -186,14 +222,15 @@ export default async function PendingPage() {
                   <div
                     key={row.id}
                     className="slot movecard"
-                    style={{ ['--slot-hue' as string]: row.status === 'executed' ? 'var(--gain)' : 'var(--border-strong)' }}
+                    style={{ ['--slot-hue' as string]: EDGE[outcomeTag(row).tone] }}
                   >
                     <div className="movehead">
-                      <span className="movehead__who">{outcomeLine(row)}</span>
+                      <Tag {...outcomeTag(row)} />
+                      <span className="movehead__who">{moveName(row)}</span>
                       <span>
                         week {row.week}
                         {row.at ? ` · ${when(row.at)}` : ''}
-                        {row.failure ? ` · ${row.failure.toLowerCase().replace('player', 'player ')}` : ''}
+                        {row.failure ? ` · ${WHY_FAILED[row.failure] ?? row.failure.toLowerCase()}` : ''}
                       </span>
                     </div>
                     <MoveLines adds={row.adds} drops={row.drops} {...sides(row)} />
