@@ -1,5 +1,5 @@
-# Checks and builds the Windows installer on every push to main.
-# The installer is attached to the run as an artifact ("ds-nfl-installer").
+# Checks and builds the Windows installer on every push to main, then publishes it
+# as a release so there is a permanent download link rather than a 14-day artifact.
 # Live ESPN tests skip themselves here: CI has no league credentials, and never should.
 name: Build
 
@@ -13,7 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  # Releases are written from here; nothing else needs writing.
+  contents: write
 
 jobs:
   build:
@@ -50,3 +51,22 @@ jobs:
           path: apps/desktop/dist/ds-nfl Setup *.exe
           if-no-files-found: error
           retention-days: 14
+
+      # One release per build of main, so every installer keeps a permanent link.
+      # The app version rarely changes, so the build number makes the tag unique.
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          tag="v$version-build.${{ github.run_number }}"
+          installer=$(ls "apps/desktop/dist/ds-nfl Setup "*.exe)
+          # Written to a file so the notes keep their own line breaks and no YAML indent.
+          git log -1 --pretty=%s > notes.md
+          printf '\n%s\n' "Windows installer, built from ${{ github.sha }}." >> notes.md
+          printf '%s\n' "It is unsigned, so SmartScreen warns on first run. Installing over an existing copy keeps your leagues and settings." >> notes.md
+          gh release create "$tag" "$installer" \
+            --title "ds-nfl $version (build ${{ github.run_number }})" \
+            --notes-file notes.md
