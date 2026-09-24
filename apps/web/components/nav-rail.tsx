@@ -5,18 +5,19 @@ import { usePathname } from 'next/navigation';
 import type { LeagueSummary } from '@ds-nfl/adapters';
 import { LeagueSwitcher } from './league-switcher';
 
+// Ordered by how often they are opened: the lineup every day, the scoring rules once a season.
 const THIS_WEEK = [
   { href: '/', label: 'Lineup' },
   { href: '/waivers', label: 'Waivers' },
+  { href: '/pending', label: 'Pending' },
   { href: '/trades', label: 'Trades' },
   { href: '/players', label: 'Players' },
-  { href: '/season', label: 'Coming weeks' },
-  { href: '/pending', label: 'Pending' },
 ];
 
 const LEAGUE = [
   { href: '/ai', label: 'League AI' },
-  { href: '/review', label: "How it's doing" },
+  { href: '/review', label: 'Results' },
+  { href: '/season', label: 'Coming weeks' },
   { href: '/settings', label: 'Scoring & roster' },
   { href: '/connect', label: 'Settings' },
 ];

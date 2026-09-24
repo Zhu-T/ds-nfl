@@ -92,6 +92,12 @@ multiple teams work without special cases.
 thresholds, and D/ST bands) and applied to stat lines. Any platform rule that cannot be
 mapped is surfaced to you rather than silently scored as zero.
 
+The Scoring page lists the rules biggest first, and describes each by what its numbers do
+rather than by a guessed name: who accrues it and how much of it they are projected for this
+week — "+0.04 · passing yards #3 · QB, about 246 a week · 9.8 pts a week", "+5 · Stat #4 ·
+QB, about 1.6 a week". ESPN publishes no dictionary of stat ids, and only four are known for
+certain, so the rest are shown by id with the evidence beside them.
+
 **Lineup.** With FLEX/OP slots, setting a lineup is a bipartite assignment problem, not a
 sort. A greedy "best player into the best slot" pass is provably wrong — it will strand
 your best receiver in the flex and leave you without a WR2. The optimizer solves it
@@ -181,7 +187,8 @@ value.
 - The ranking itself is unchanged, because the press often recommends players for the
   weeks after this one.
 - **Evaluate** sits on every row of the **Players** page: click it and the evaluation opens
-  under that row, for anyone in the league. Nothing is typed, so nothing has to be matched by
+  under that row, for anyone in the league. **Minimise** collapses it while keeping what was
+  worked out, so reopening costs nothing, and several can be kept side by side. Nothing is typed, so nothing has to be matched by
   name or disambiguated — the row already knows who it is. It shows:
   - where the player is: free agent, waivers, another team, or your roster;
   - their projection, ESPN's with betting lines and news applied, and their game;
@@ -273,6 +280,16 @@ season, relative to their own ESPN projections, from finished weeks only.
   it, e.g. "@ ATL: D/STs 164% over projection vs them, ×1.20".
 - **Streamers at other positions:** see Trending adds under Waivers.
 
+**Win chance.** The header carries your chance of winning the week: the lineup you have set
+against your opponent's, each player with the spread typical for their position and
+projection, games already over counted at their score. It is the same model the High ceiling
+ranking uses.
+
+**Trades** also show a rough chance the other manager accepts: how much their own starting
+lineup gains, discounted when they would send the better-projected player. It is a stated
+rule of thumb, not a fitted model — nobody's accepted and rejected offers are recorded
+anywhere the app can read.
+
 **Next week.** While a week is being played, the week switch in the top bar plans the next
 one: its lineup (nothing is locked yet), the matchup against next week's opponent (whose
 total is the best lineup their roster can field, since theirs is not set), and waiver and
@@ -317,7 +334,7 @@ removing findings saves at once and does not run the check again. A check only r
 when clicked. With Claude it is billed to your Anthropic account (web searches plus tokens).
 With the local model it is free, and takes a few minutes.
 
-### How it's doing
+### Results
 
 A page grading the app against what happened, from the weekly results below. Only players
 priced **before kickoff** count, so nothing is scored with hindsight.
@@ -363,9 +380,12 @@ sides of the move before anything is written:
 
 Confirming writes through the same transactions endpoint lineups use.
 
-**Pending** is its own page: what you have put in and not yet had settled, **trades another
-manager has offered you**, when the waivers run in your league, and how your last few moves
-actually ended — went through, cancelled, or
+**Pending** is its own page. Every move reads the same way: one line per player, **IN** in
+green with where they come from, **OUT** in red with where they go — "Tre Tucker (WR · LV) ←
+from jahmyr GIBBY", "Davante Adams (WR · LAR) → to jahmyr GIBBY". So which way a player is
+going, and between whom, never has to be read out of a sentence. The page holds what you have
+put in and not yet had settled, **trades another manager has offered you**, when the waivers
+run in your league, and how your last few moves actually ended — went through, cancelled, or
 failed, with ESPN's reason. Waivers links to it, marks a player you have already claimed as
 "claim pending" so they cannot be claimed twice, and leaves a player already on the way out
 off the drop list. The League AI is told about them too.
@@ -374,6 +394,11 @@ Working out what is really pending takes care, because ESPN's log is append-only
 
 - Cancelling a claim **appends** a `CANCELED` row and leaves the original saying `PENDING`.
 - Claims whose drop player has since gone stay `PENDING` for ever.
+- A trade is written as two rows: the offer, carrying the players, and the answer
+  (`TRADE_DECLINE` or `TRADE_ACCEPT`), carrying none and pointing back at it. ESPN also
+  writes a cancelled copy of the offer at the same moment. The app matches the answer to both,
+  so a declined trade says "declined" once, with its players, rather than appearing twice as
+  "cancelled" and as an empty row.
 
 **A trade offered to you** is shown with both sides valued: what it does to your best lineups
 this week and across the coming weeks, what it does to theirs, and where your depth at a

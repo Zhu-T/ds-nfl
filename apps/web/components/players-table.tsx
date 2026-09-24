@@ -47,8 +47,16 @@ export function PlayersTable({
   aiEnabled: boolean;
   providerLabel: string;
 }) {
-  // One open evaluation at a time: it is a wide panel inside the table.
-  const [openId, setOpenId] = useState<string | null>(null);
+  // Evaluations stay mounted while minimised, so reopening one costs nothing:
+  // the numbers, the web news and the model's reading are already there.
+  const [open, setOpen] = useState<Record<string, 'open' | 'min'>>({});
+  const toggle = (id: string, to: 'open' | 'min' | null) =>
+    setOpen((prev) => {
+      const next = { ...prev };
+      if (to === null) delete next[id];
+      else next[id] = to;
+      return next;
+    });
   const [query, setQuery] = useState('');
   const [position, setPosition] = useState<(typeof POSITIONS)[number]>('All');
   const [who, setWho] = useState<Who>('all');
@@ -152,17 +160,28 @@ export function PlayersTable({
                       <button
                         type="button"
                         className="btn btn--ghost"
-                        aria-expanded={openId === r.id}
-                        onClick={() => setOpenId(openId === r.id ? null : r.id)}
+                        aria-expanded={open[r.id] === 'open'}
+                        onClick={() => toggle(r.id, open[r.id] === 'open' ? 'min' : 'open')}
                       >
-                        {openId === r.id ? 'Close' : 'Evaluate'}
+                        {open[r.id] === 'open' ? 'Minimise' : open[r.id] === 'min' ? 'Show' : 'Evaluate'}
                       </button>
                     )}
                   </td>
                 </tr>
-                {openId === r.id && leagueKey && (
-                  <tr className="table__panel">
+                {open[r.id] && leagueKey && (
+                  <tr className="table__panel" hidden={open[r.id] === 'min'}>
                     <td colSpan={7}>
+                      <div className="table__panelhead">
+                        <span>{r.name}</span>
+                        <span>
+                          <button type="button" className="btn btn--ghost" onClick={() => toggle(r.id, 'min')}>
+                            Minimise
+                          </button>
+                          <button type="button" className="btn btn--ghost" onClick={() => toggle(r.id, null)}>
+                            Close
+                          </button>
+                        </span>
+                      </div>
                       <PlayerEvaluation
                         leagueKey={leagueKey}
                         week={week}

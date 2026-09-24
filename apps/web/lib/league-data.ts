@@ -15,6 +15,7 @@ import {
   expandStartingSlots,
   horizonValues,
   swapValue,
+  tradeAcceptance,
   tradeValue,
   openedRoleNote,
   type DropSuggestion,
@@ -915,6 +916,8 @@ export interface TradeIdea {
   readonly getProjected: number;
   readonly myGain: number;
   readonly theirGain: number;
+  /** A rough chance they accept, 0 to 1; a rule of thumb, not a fitted model. */
+  readonly theirChance: number;
 }
 
 export interface TradesView {
@@ -969,6 +972,7 @@ export function loadTrades(key?: string | null, requestedWeek?: number | null): 
             getProjected: get.projectedPoints,
             myGain,
             theirGain,
+            theirChance: tradeAcceptance({ theirGain, theyReceive: give.projectedPoints, theySend: get.projectedPoints }),
           });
         }
       }
@@ -1001,8 +1005,33 @@ function round1(n: number): number {
 export interface ScoringRow {
   readonly statId: number;
   readonly points: number;
+  /** Per-position exceptions, e.g. "D/ST 5". */
   readonly overrides: string | null;
+  /**
+   * What the stat appears to be, worked out from the league's own projections
+   * rather than guessed: the positions that accrue it, and how much of it a
+   * typical one gets in a week. ESPN publishes no dictionary of stat ids.
+   */
+  readonly positions: readonly string[];
+  readonly perGame: number;
+  /** The name where it is known for certain, e.g. "passing yards". */
+  readonly name: string | null;
+  /** Points a typical player at the leading position earns from this rule each week. */
+  readonly weight: number;
 }
+
+/**
+ * The only stat ids the app knows by name for certain: they were confirmed
+ * against ESPN's own projected stat lines when betting lines were added.
+ */
+const KNOWN_STATS: Readonly<Record<number, string>> = {
+  3: 'passing yards',
+  24: 'rushing yards',
+  42: 'receiving yards',
+  53: 'receptions',
+};
+
+const POSITION_BY_ID: Readonly<Record<string, string>> = { '1': 'QB', '2': 'RB', '3': 'WR', '4': 'TE', '5': 'K', '16': 'D/ST' };
 
 export interface SettingsView {
   readonly league: LeagueInfo;
@@ -1095,6 +1124,14 @@ export interface TradeOfferValue {
   readonly depth: readonly string[];
 }
 
+/** A player on the move, with enough to recognise them at a glance. */
+export interface MovePlayer {
+  readonly id: string;
+  readonly name: string;
+  readonly position: string;
+  readonly proTeam: string | null;
+}
+
 export interface PendingRow {
   readonly id: string;
   readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
@@ -1103,8 +1140,15 @@ export interface PendingRow {
   readonly week: number;
   readonly at: string | null;
   readonly bid?: number;
-  readonly adds: readonly string[];
-  readonly drops: readonly string[];
+  /** Coming to your roster, and leaving it. */
+  readonly adds: readonly MovePlayer[];
+  readonly drops: readonly MovePlayer[];
+  /** The other side of the move: "waivers", "free agency", or the team's name. */
+  readonly counterparty: string;
+  /** True when another manager proposed it, so it is yours to answer. */
+  readonly theirs: boolean;
+  /** How a trade ended, when a later row answered it. */
+  readonly answered?: 'accepted' | 'declined';
   /** False when the claim can no longer happen: the drop has gone, or the add already landed. */
   readonly live: boolean;
   /** For a trade offered to you: both sides valued. */
@@ -1131,13 +1175,30 @@ export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
     // Names for every player named in the rows shown.
     const shown = [...mine.filter((t) => t.status === 'pending'), ...settledFirst(mine).slice(0, 8)];
     const ids = [...new Set(shown.flatMap((t) => [...t.adds, ...t.drops]))];
-    const known = new Map(roster.players.map((p) => [p.platformPlayerId, p.name]));
+    const known = new Map<string, MovePlayer>(
+      roster.players.map((p) => [
+        p.platformPlayerId,
+        { id: p.platformPlayerId, name: p.name, position: p.position, proTeam: p.proTeam },
+      ]),
+    );
     const missing = ids.filter((id) => !known.has(id));
     for (const p of missing.length > 0 ? await reader.getPlayersByIds(ref, league.currentWeek, missing).catch(() => []) : []) {
-      known.set(p.platformPlayerId, p.name);
+      known.set(p.platformPlayerId, { id: p.platformPlayerId, name: p.name, position: p.position, proTeam: p.proTeam });
     }
+    // Who the players come from and go to: the pool, or the other manager.
+    const teamNames = new Map((await reader.getTeams(ref).catch(() => [])).map((t) => [String(t.teamId), t.name]));
+    const player = (id: string): MovePlayer => known.get(id) ?? { id, name: `Player ${id}`, position: '', proTeam: null };
     const onRoster = new Set(roster.players.map((p) => p.platformPlayerId));
     const liveIds = new Set(livePendingMoves(mine, { onRoster }).map((t) => t.id));
+    // ESPN answers a trade with a separate, player-less row: it points back at the
+    // offer by id, and it also writes a copy of the offer at the same moment. Both
+    // are matched, so the answer is not reported as a plain cancellation.
+    const answers = new Map<string, 'accepted' | 'declined'>();
+    for (const t of mine.filter((x) => x.action === 'decline' || x.action === 'accept')) {
+      const outcome = t.action === 'accept' ? ('accepted' as const) : ('declined' as const);
+      if (t.relatedId) answers.set(t.relatedId, outcome);
+      if (t.at) answers.set(`at:${t.at}`, outcome);
+    }
     const row = (t: (typeof mine)[number]): PendingRow => ({
       id: t.id,
       kind: t.kind,
@@ -1146,8 +1207,18 @@ export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
       week: t.week,
       at: t.at,
       ...(t.bid !== undefined ? { bid: t.bid } : {}),
-      adds: t.adds.map((id) => known.get(id) ?? `Player ${id}`),
-      drops: t.drops.map((id) => known.get(id) ?? `Player ${id}`),
+      adds: t.adds.map(player),
+      drops: t.drops.map(player),
+      counterparty:
+        t.kind === 'trade'
+          ? (teamNames.get(String(t.otherTeamId ?? t.teamId)) ?? 'the other team')
+          : t.kind === 'waivers'
+            ? 'waivers'
+            : 'free agency',
+      theirs: !t.isMine,
+      ...(answers.get(t.id) ?? (t.kind === 'trade' && t.at ? answers.get(`at:${t.at}`) : undefined)
+        ? { answered: (answers.get(t.id) ?? answers.get(`at:${t.at}`))! }
+        : {}),
       live: liveIds.has(t.id),
     });
 
@@ -1158,11 +1229,13 @@ export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
       if (valued) offers.set(t.id, valued);
     }
 
+    // The answer rows carry no players; the offer they point at tells the story.
+    const hasPlayers = (t: (typeof mine)[number]) => t.adds.length > 0 || t.drops.length > 0;
     return {
       pending: mine
-        .filter((t) => t.status === 'pending')
+        .filter((t) => t.status === 'pending' && hasPlayers(t))
         .map((t) => ({ ...row(t), ...(offers.has(t.id) ? { trade: offers.get(t.id)! } : {}) })),
-      settled: settledFirst(mine).slice(0, 8).map(row),
+      settled: settledFirst(mine.filter(hasPlayers)).slice(0, 8).map(row),
       waiverRun: league.waiverRun,
       readAt: new Date().toISOString(),
     };
@@ -1251,23 +1324,51 @@ export function loadReview(key?: string | null): Promise<Loaded<ReviewView>> {
 }
 
 export function loadSettings(key?: string | null): Promise<Loaded<SettingsView>> {
-  return load(key, async (_reader, _ref, league) => {
+  return load(key, async (reader, ref, league) => {
     const items = ((league.scoringRaw as any)?.scoringItems ?? []) as any[];
     const parsed = parseEspnScoring(items);
 
+    // Who actually accrues each stat, from this week's projections across the league.
+    const rosters = [...(await reader.getAllRosters(ref, league.currentWeek).catch(() => new Map<string, RosterPlayer[]>())).values()].flat();
+    const seen = new Map<string, Map<string, { total: number; players: number }>>();
+    for (const p of rosters) {
+      for (const [statId, value] of Object.entries<number>(p.projectedStats ?? {})) {
+        if (!(value > 0)) continue;
+        const byPosition = seen.get(statId) ?? new Map();
+        seen.set(statId, byPosition);
+        const cell = byPosition.get(p.position) ?? { total: 0, players: 0 };
+        cell.total += value;
+        cell.players += 1;
+        byPosition.set(p.position, cell);
+      }
+    }
+
     const scoring: ScoringRow[] = items
       .filter((i) => i.points !== 0 || Object.keys(i.pointsOverrides ?? {}).length > 0)
-      .map((i) => ({
-        statId: i.statId,
-        points: i.points,
-        // ESPN sends an empty object for rules with no overrides; treat that as none.
-        overrides: i.pointsOverrides && Object.keys(i.pointsOverrides).length > 0
-          ? Object.entries(i.pointsOverrides)
-              .map(([pos, pts]) => `pos ${pos}: ${pts}`)
-              .join(', ')
-          : null,
-      }))
-      .sort((a, b) => a.statId - b.statId);
+      .map((i) => {
+        // Positions where enough players accrue it for the average to mean something.
+        const byPosition = [...(seen.get(String(i.statId)) ?? new Map())]
+          .filter(([, cell]) => cell.players >= 3)
+          .sort((a, b) => b[1].total / b[1].players - a[1].total / a[1].players);
+        const lead = byPosition[0];
+        const perGame = lead ? round1(lead[1].total / lead[1].players) : 0;
+        return {
+          statId: i.statId,
+          points: i.points,
+          // ESPN sends an empty object for rules with no overrides; treat that as none.
+          overrides:
+            i.pointsOverrides && Object.keys(i.pointsOverrides).length > 0
+              ? Object.entries(i.pointsOverrides)
+                  .map(([pos, pts]) => `${POSITION_BY_ID[pos] ?? `position ${pos}`} ${pts}`)
+                  .join(', ')
+              : null,
+          positions: byPosition.map(([position]) => position),
+          perGame,
+          name: KNOWN_STATS[i.statId] ?? null,
+          weight: round1(Math.abs(i.points) * perGame),
+        };
+      })
+      .sort((a, b) => b.weight - a.weight || a.statId - b.statId);
 
     return {
       league,

@@ -1,5 +1,6 @@
 import { LoadState } from '@/components/loaded';
 import { loadPending, type PendingRow } from '@/lib/league-data';
+import { MoveLines } from '@/components/move-lines';
 import { TradeOffer } from '@/components/trade-offer';
 import { aiStatus } from '@/lib/ai';
 
@@ -13,13 +14,17 @@ const TITLE: Record<PendingRow['kind'], string> = {
   other: 'Move',
 };
 
-/** "Tyler Loop in, Eagles D/ST out". */
-function swapLine(row: PendingRow): string {
-  const parts = [
-    row.adds.length > 0 ? `${row.adds.join(', ')} in` : '',
-    row.drops.length > 0 ? `${row.drops.join(', ')} out` : '',
-  ].filter(Boolean);
-  return parts.join(', ') || 'no players named';
+const OUTCOME: Record<Exclude<PendingRow['status'], 'pending'>, string> = {
+  executed: 'went through',
+  canceled: 'cancelled',
+  failed: 'failed',
+};
+
+/** "Trade with jahmyr GIBBY declined", "Waiver claim went through". */
+function outcomeLine(row: PendingRow): string {
+  const what = row.kind === 'trade' ? `Trade with ${row.counterparty}` : TITLE[row.kind];
+  if (row.answered) return `${what} ${row.answered === 'accepted' ? 'accepted' : 'declined'}`;
+  return `${what} ${OUTCOME[row.status as Exclude<PendingRow['status'], 'pending'>]}`;
 }
 
 function when(at: string | null): string {
@@ -41,19 +46,27 @@ function runsAt(run: { days: readonly string[]; hour: number } | null): string |
   return `${list} at ${hour}`;
 }
 
-const OUTCOME: Record<Exclude<PendingRow['status'], 'pending'>, string> = {
-  executed: 'went through',
-  canceled: 'cancelled',
-  failed: 'failed',
-};
+/** Where the players on each side come from and go to. */
+function sides(row: PendingRow): { from: string; to: string } {
+  if (row.kind === 'trade') return { from: row.counterparty, to: row.counterparty };
+  // A dropped player goes back to the pool, whichever way they came.
+  return { from: row.counterparty, to: 'the waiver pool' };
+}
+
+/** Who put the move in, in the manager's own words. */
+function proposedBy(row: PendingRow): string {
+  if (row.kind === 'trade') return row.theirs ? `${row.counterparty} offered this trade` : `You offered this trade to ${row.counterparty}`;
+  return row.kind === 'waivers' ? 'You put in this claim' : 'You added this player';
+}
 
 export default async function PendingPage() {
   const res = await loadPending();
   const data = res.state === 'ok' ? res.data : null;
   const ai = aiStatus();
-  const offers = data?.pending.filter((p) => p.live && p.trade) ?? [];
-  const live = data?.pending.filter((p) => p.live && !p.trade) ?? [];
-  const stale = data?.pending.filter((p) => !p.live) ?? [];
+  const offers = data?.pending.filter((p) => p.live && p.kind === 'trade') ?? [];
+  const claims = data?.pending.filter((p) => p.live && p.kind !== 'trade') ?? [];
+  // An answered trade is told in "Just settled"; leaving it here too would say it twice.
+  const stale = data?.pending.filter((p) => !p.live && !p.answered) ?? [];
   const schedule = runsAt(data?.waiverRun ?? null);
 
   return (
@@ -70,27 +83,10 @@ export default async function PendingPage() {
             </div>
             <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
               Moves waiting to settle: claims you have put in, and trades another manager has offered you. Your roster
-              does not change until they settle, so nothing here is counted in projections, lineups or waiver value.
-              This page is read from ESPN each time you open it.
+              does not change until they settle, so nothing here counts in projections, lineups or waiver value.
             </p>
 
-            {offers.length > 0 && res.state === 'ok' && (
-              <div className="slots" style={{ marginBottom: '1rem' }}>
-                {offers.map((row) => (
-                  <div key={row.id} className="slot slot--changed" style={{ ['--slot-hue' as string]: 'var(--pos-wr)' }}>
-                    <div className="slot__tag">TRADE</div>
-                    <TradeOffer
-                      row={row}
-                      leagueKey={res.key}
-                      aiEnabled={ai.provider !== 'off'}
-                      providerLabel={ai.judgmentLabel ?? ''}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {live.length === 0 && offers.length === 0 ? (
+            {offers.length === 0 && claims.length === 0 && (
               <div className="notice">
                 <span className="notice__tag">Clear</span>
                 <span>
@@ -98,45 +94,80 @@ export default async function PendingPage() {
                   show up here until they settle.
                 </span>
               </div>
-            ) : live.length > 0 ? (
-              <div className="slots">
-                {live.map((row) => (
-                  <div key={row.id} className="slot slot--changed" style={{ ['--slot-hue' as string]: 'var(--accent)' }}>
-                    <div className="slot__tag">W{row.week}</div>
-                    <div>
-                      <div className="slot__name">{swapLine(row)}</div>
-                      <div className="slot__sub">
-                        {TITLE[row.kind]}
-                        {row.bid !== undefined ? ` · $${row.bid}` : ''}
-                        {row.at ? ` · put in ${when(row.at)}` : ''}
-                        {schedule ? ` · settles ${schedule}` : ''}
+            )}
+
+            {offers.length > 0 && res.state === 'ok' && (
+              <>
+                <h2 className="subhead">
+                  Trade {offers.length === 1 ? 'offer' : 'offers'} <span className="subhead__meta">yours to answer</span>
+                </h2>
+                <div className="slots">
+                  {offers.map((row) => (
+                    <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--pos-wr)' }}>
+                      <div className="movehead">
+                        <span className="movehead__who">{proposedBy(row)}</span>
+                        <span>
+                          week {row.week}
+                          {row.at ? ` · ${when(row.at)}` : ''}
+                        </span>
                       </div>
+                      <MoveLines adds={row.adds} drops={row.drops} {...sides(row)} />
+                      <TradeOffer
+                        row={row}
+                        leagueKey={res.key}
+                        aiEnabled={ai.provider !== 'off'}
+                        providerLabel={ai.judgmentLabel ?? ''}
+                      />
                     </div>
-                    <div className="slot__pts">
-                      <span className="slot__empty">waiting</span>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {claims.length > 0 && (
+              <>
+                <h2 className="subhead" style={{ marginTop: offers.length > 0 ? '1.5rem' : 0 }}>
+                  Waiting to settle <span className="subhead__meta">{schedule ? `waivers run ${schedule}` : ''}</span>
+                </h2>
+                <div className="slots">
+                  {claims.map((row) => (
+                    <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--accent)' }}>
+                      <div className="movehead">
+                        <span className="movehead__who">{proposedBy(row)}</span>
+                        <span>
+                          {TITLE[row.kind]} · week {row.week}
+                          {row.bid !== undefined ? ` · $${row.bid}` : ''}
+                          {row.at ? ` · ${when(row.at)}` : ''}
+                        </span>
+                      </div>
+                      <MoveLines adds={row.adds} drops={row.drops} {...sides(row)} />
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+                  ))}
+                </div>
+              </>
+            )}
 
             {stale.length > 0 && (
               <details className="fold">
                 <summary>
-                  {stale.length} older {stale.length === 1 ? 'claim' : 'claims'} ESPN still lists as pending but cannot
+                  {stale.length} older {stale.length === 1 ? 'move' : 'moves'} ESPN still lists as pending but cannot
                   happen
                 </summary>
                 <div className="slots">
                   {stale.map((row) => (
-                    <div key={row.id} className="slot" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
-                      <div className="slot__tag">W{row.week}</div>
-                      <div>
-                        <div className="slot__name">{swapLine(row)}</div>
-                        <div className="slot__sub">
-                          the player it would drop has already gone, or the one it adds is yours — ESPN leaves these in
-                          the list
-                        </div>
+                    <div key={row.id} className="slot movecard" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
+                      <div className="movehead">
+                        <span>
+                          {row.kind === 'trade' ? `Trade with ${row.counterparty}` : TITLE[row.kind]} · week {row.week}
+                          {row.at ? ` · ${when(row.at)}` : ''} ·{' '}
+                          {row.answered
+                            ? `already ${row.answered}`
+                            : row.kind === 'trade'
+                              ? 'no longer open: it was answered or withdrawn'
+                              : 'the player it would drop has already gone, or the one it adds is yours'}
+                        </span>
                       </div>
+                      <MoveLines adds={row.adds} drops={row.drops} {...sides(row)} />
                     </div>
                   ))}
                 </div>
@@ -154,18 +185,18 @@ export default async function PendingPage() {
                 {data.settled.map((row) => (
                   <div
                     key={row.id}
-                    className="slot"
+                    className="slot movecard"
                     style={{ ['--slot-hue' as string]: row.status === 'executed' ? 'var(--gain)' : 'var(--border-strong)' }}
                   >
-                    <div className="slot__tag">W{row.week}</div>
-                    <div>
-                      <div className="slot__name">{swapLine(row)}</div>
-                      <div className="slot__sub">
-                        {TITLE[row.kind]} {OUTCOME[row.status as Exclude<PendingRow['status'], 'pending'>]}
-                        {row.failure ? ` · ${row.failure.toLowerCase().replace(/player/g, 'player ')}` : ''}
+                    <div className="movehead">
+                      <span className="movehead__who">{outcomeLine(row)}</span>
+                      <span>
+                        week {row.week}
                         {row.at ? ` · ${when(row.at)}` : ''}
-                      </div>
+                        {row.failure ? ` · ${row.failure.toLowerCase().replace('player', 'player ')}` : ''}
+                      </span>
                     </div>
+                    <MoveLines adds={row.adds} drops={row.drops} {...sides(row)} />
                   </div>
                 ))}
               </div>

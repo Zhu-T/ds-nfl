@@ -76,6 +76,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 </span>
               </div>
 
+              {matchup.winChance !== null && (
+                <div className="scorebug__seg scorebug__seg--secondary">
+                  <span className="scorebug__label">Win chance</span>
+                  <span
+                    className={`scorebug__value delta${matchup.winChance < 50 ? ' delta--down' : ''}`}
+                    title="Your set lineup against theirs, each player with the spread typical for their position and projection; games already over count at their score."
+                  >
+                    {matchup.winChance < 1 ? '<1' : Math.round(matchup.winChance)}%
+                  </span>
+                </div>
+              )}
+
               <div className="scorebug__seg scorebug__seg--secondary">
                 <span className="scorebug__label">Margin</span>
                 <span

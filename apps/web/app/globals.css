@@ -1919,10 +1919,17 @@ form.weektoggle {
   color: var(--text-dim);
 }
 
-/* An evaluation opened from a table row. */
+/*
+ * An evaluation opened from a table row. Table cells are nowrap, which the
+ * panel must undo: inherited, its text cannot wrap, the table grows past the
+ * window, and the columns on the right — including the Evaluate buttons —
+ * scroll out of sight.
+ */
 .table__panel > td {
   padding: 0.75rem 1rem 1rem;
   background: var(--surface-2);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .evaluate {
@@ -1947,4 +1954,155 @@ form.weektoggle {
   border-left: 2px solid var(--accent);
   background: var(--surface-2);
   font-size: 0.88rem;
+}
+
+/* ---------- moves in and out (Pending) ---------- */
+
+.moves {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.move {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(7rem, auto) 1fr auto;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-2);
+  font-size: 0.88rem;
+}
+
+.move--in {
+  border-left-color: var(--gain);
+}
+
+.move--out {
+  border-left-color: var(--loss);
+}
+
+.move__mark {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.move--in .move__mark {
+  color: var(--gain);
+}
+
+.move--out .move__mark {
+  color: var(--loss);
+}
+
+.move__who {
+  color: var(--text);
+}
+
+.move__where,
+.move__side {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.move__side {
+  white-space: nowrap;
+}
+
+.move--none {
+  display: block;
+  color: var(--text-dim);
+}
+
+/* The line above a move: who proposed it and when. */
+.movehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.movehead__who {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.movecard {
+  display: block;
+  padding: 0.8rem 1rem;
+}
+
+.table__panelhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.table__panelhead .btn {
+  margin-left: 0.4rem;
+}
+
+/* ---------- scoring rules ---------- */
+
+.rules {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.rule {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr auto;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.rule__pts {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+  color: var(--text);
+}
+
+.rule__what {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.rule__name {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.rule__id,
+.rule__who {
+  color: var(--text-dim);
+  font-size: 0.76rem;
+}
+
+.rule__worth {
+  display: grid;
+  justify-items: end;
+  gap: 0.05rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rule__worthlabel {
+  font-size: 0.7rem;
+  color: var(--text-dim);
 }

@@ -2,6 +2,7 @@ import { loadTrades } from '@/lib/league-data';
 import { LoadState } from '@/components/loaded';
 import { aiStatus } from '@/lib/ai';
 import { PitchButton } from './pitch-button';
+import { acceptanceLabel } from '@ds-nfl/core';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,6 +89,12 @@ export default async function TradesPage() {
                     <div className="slot__pts">
                       <span className="delta">+{t.myGain.toFixed(1)}</span>
                       <div className="slot__sub">they gain {t.theirGain.toFixed(1)}</div>
+                      <div
+                        className="slot__alt"
+                        title="A rule of thumb, not a fitted model: how much their starting lineup gains, discounted when they would send the better-projected player. Nobody's accepted and rejected offers are recorded anywhere the app can read."
+                      >
+                        {Math.round(t.theirChance * 100)}% to accept · {acceptanceLabel(t.theirChance)}
+                      </div>
                     </div>
                   </div>
                 ))}

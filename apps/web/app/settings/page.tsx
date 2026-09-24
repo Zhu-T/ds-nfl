@@ -62,17 +62,36 @@ export default async function SettingsPage() {
               <span className="section__meta">{data.scoredRuleCount} rules read from ESPN</span>
             </div>
             <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
-              Every rule your league scores, by ESPN statId (ESPN publishes no names for them), with
-              points and any per-position override. Scoring every player-week with these rules
-              reproduces ESPN&apos;s own totals exactly.
+              Every rule your league scores, biggest first: what one unit is worth, who earns it, and
+              how much of it a typical player at that position is projected for this week. ESPN
+              publishes no names for its stat ids, so each rule is described by what the numbers do
+              rather than by a guessed label. Scoring every player-week with these rules reproduces
+              ESPN&apos;s own totals exactly.
             </p>
 
-            <div className="rulegrid">
+            <div className="rules">
               {data.scoring.map((r) => (
-                <div key={r.statId} className="rulegrid__cell" {...(r.overrides ? { title: r.overrides } : {})}>
-                  <span className="table__mono">#{r.statId}</span>
-                  <span className="rulegrid__pts">{r.points}</span>
-                  {r.overrides && <span className="rulegrid__over">{r.overrides}</span>}
+                <div key={r.statId} className="rule">
+                  <span className="rule__pts">
+                    {r.points > 0 ? '+' : ''}
+                    {r.points}
+                  </span>
+                  <span className="rule__what">
+                    <span className="rule__name">
+                      {r.name ?? `Stat #${r.statId}`}
+                      {r.name ? <span className="rule__id"> #{r.statId}</span> : null}
+                    </span>
+                    <span className="rule__who">
+                      {r.positions.length > 0
+                        ? `${r.positions.slice(0, 3).join(', ')} · about ${r.perGame} a week for a ${r.positions[0]}`
+                        : 'nobody on a roster is projected for this'}
+                      {r.overrides ? ` · except ${r.overrides}` : ''}
+                    </span>
+                  </span>
+                  <span className="rule__worth">
+                    {r.weight > 0 ? `${r.weight} pts a week` : '—'}
+                    <span className="rule__worthlabel">to a {r.positions[0] ?? 'player'}</span>
+                  </span>
                 </div>
               ))}
             </div>

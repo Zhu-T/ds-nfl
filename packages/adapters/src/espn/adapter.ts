@@ -671,6 +671,18 @@ export function parseTransactions(data: any, teamId: string): LeagueTransaction[
       isMine: String(t?.teamId) === me,
       involvesMe: String(t?.teamId) === me || mine.length > 0,
       ...(type.includes('TRADE') && otherTeam ? { otherTeamId: otherTeam } : {}),
+      ...(type.includes('TRADE')
+        ? {
+            action: type.includes('DECLINE')
+              ? ('decline' as const)
+              : type.includes('ACCEPT')
+                ? ('accept' as const)
+                : type.includes('UPHELD')
+                  ? ('upheld' as const)
+                  : ('proposal' as const),
+          }
+        : {}),
+      ...(typeof t?.relatedTransactionId === 'string' ? { relatedId: t.relatedTransactionId } : {}),
       kind:
         type === 'WAIVER'
           ? 'waivers'

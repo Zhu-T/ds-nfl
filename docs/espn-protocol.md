@@ -224,6 +224,14 @@ ESPN also leaves **stale** claims as `PENDING`: ones whose drop player has since
 whose add already landed. Anything acting on this list has to check it against the roster
 first; one real team had eight pending rows of which one was still possible.
 
+**A trade is three rows, not one.** `TRADE_PROPOSAL` carries the players, each item with
+`fromTeamId`/`toTeamId`, so it reads from either side. Answering it writes
+`TRADE_DECLINE`/`TRADE_ACCEPT` with **no items** and a `relatedTransactionId`, and ESPN also
+leaves a `TRADE_PROPOSAL`/`CANCELED` copy stamped at the moment of the answer, while the
+original stays `PENDING`. Seen on 2026-09-24: proposal at 16:33:31 (`PENDING`), decline at
+17:08:41 (no items), and a cancelled copy at 17:08:41. Anything listing trades has to join
+these, or it shows one offer three times, once of them empty.
+
 **Cancelling does not change the original row.** Cancelling a claim in ESPN's UI appends a
 second transaction, `WAIVER`/`CANCELED`, with the same players and its own id and timestamp,
 and leaves the first row saying `PENDING` for ever. Observed with a claim made at 17:23:18

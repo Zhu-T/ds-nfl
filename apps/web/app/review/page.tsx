@@ -29,7 +29,7 @@ export default async function ReviewPage() {
         <>
           <section className="section" style={{ marginTop: 0 }}>
             <div className="section__head">
-              <h1 className="section__title">How it&apos;s doing</h1>
+              <h1 className="section__title">Results</h1>
               <span className="section__meta">
                 {review.weeks.length} {review.weeks.length === 1 ? 'week' : 'weeks'} recorded
               </span>

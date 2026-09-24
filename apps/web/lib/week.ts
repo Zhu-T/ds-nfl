@@ -16,7 +16,9 @@ import {
   applyMatchups,
   applyNewsFindings,
   diffLineup,
+  lineupDistribution,
   optimizeLineup,
+  winChance as chanceOf,
   type OpenedRole,
   type LineupDiff,
   type LineupSolution,
@@ -48,7 +50,7 @@ import { openingsAmong } from './depth';
 import { formEnabled, formInputs } from './form';
 import { readWeekResults } from '@ds-nfl/adapters';
 import { recordCompletedWeeks, recordSnapshot, snapshotRow } from './results';
-import { priceOpponent, upsideEnabled, upsideView, type UpsideView } from './upside';
+import { priceOpponent, upsideEnabled, upsideView, winSetupFor, type UpsideView } from './upside';
 
 export interface MatchupView {
   readonly opponentName: string;
@@ -61,6 +63,12 @@ export interface MatchupView {
   readonly myProjected: number;
   /** Margin if the lineup is left as-is, and after applying the moves. */
   readonly marginNow: number;
+  /**
+   * Your chance of winning as things stand, in percent: the lineup you have set
+   * against theirs, each player with the spread typical for their position, and
+   * games already over counted at their score. Null without the data for it.
+   */
+  readonly winChance: number | null;
   readonly marginAfter: number;
 }
 
@@ -354,9 +362,19 @@ async function matchupView(plan: LineupPlan, raw: Matchup, currentPoints: number
     opponentBasis = 'best';
   }
 
+  // The chance is worked out from the lineup actually set, so it matches the
+  // totals beside it in the header rather than the best lineup available.
+  const setup = await winSetupFor(plan);
+  const set = currentAssignments(plan.players, plan.roster, plan.league.rosterSettings)
+    .flatMap((a) => (a.player ? [a.player] : []));
+  const winChance = setup
+    ? Math.round(chanceOf(lineupDistribution(set, setup.outlookFrom(plan.roster)), setup.opponent) * 1000) / 10
+    : null;
+
   return {
     opponentName: raw.opponentTeamName,
     opponentProjected,
+    winChance,
     opponentBasis,
     myProjected: currentPoints,
     marginNow: round1(currentPoints - opponentProjected),
@@ -424,6 +442,7 @@ function sampleView(error: string | null): WeekView {
       opponentBasis: 'set',
       myProjected: s.currentPoints,
       marginNow: s.matchup.marginNow,
+      winChance: null,
       marginAfter: s.matchup.marginAfter,
     },
     error,

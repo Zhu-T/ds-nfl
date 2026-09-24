@@ -202,6 +202,13 @@ export interface LeagueTransaction {
   readonly involvesMe: boolean;
   /** For a trade: the team on the other side of yours. */
   readonly otherTeamId?: string;
+  /**
+   * What a trade row is. ESPN writes the offer and the answer as separate rows:
+   * a `TRADE_PROPOSAL` carrying the players, and a `TRADE_DECLINE` or
+   * `TRADE_ACCEPT` carrying none, pointing back by `relatedId`.
+   */
+  readonly action?: 'proposal' | 'accept' | 'decline' | 'upheld';
+  readonly relatedId?: string;
   /** "lineup" is a slot change; the rest move players between teams and the pool. */
   readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
   readonly status: 'pending' | 'executed' | 'canceled' | 'failed';

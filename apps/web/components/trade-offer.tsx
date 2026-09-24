@@ -4,10 +4,7 @@ import { useState, useTransition } from 'react';
 import type { PendingRow } from '@/lib/league-data';
 import { tradeAdviceAction, type AdviceResult } from '@/app/pending/advice-actions';
 
-const pts = (n: number) => n.toFixed(1);
 const signed = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
-const side = (players: readonly { name: string; position: string; projected: number }[]) =>
-  players.map((p) => `${p.name} (${p.position}, ${pts(p.projected)})`).join(', ') || 'nobody';
 
 /**
  * A trade another manager has offered, with both sides valued, and the model's
@@ -38,17 +35,8 @@ export function TradeOffer({
 
   return (
     <div className="offer">
-      <div className="swap__row swap__in">
-        <span className="swap__mark swap__mark--in">GET</span>
-        <span className="swap__who">{side(t.incoming)}</span>
-      </div>
-      <div className="swap__row swap__out">
-        <span className="swap__mark swap__mark--out">GIVE</span>
-        <span className="swap__who">{side(t.outgoing)}</span>
-      </div>
-
       <p className="offer__value">
-        From {t.otherTeam}. Your best lineup {signed(t.myThisWeek)} in week {row.week}, {signed(t.myTotal)} across {weeks}{' '}
+        Your best lineup {signed(t.myThisWeek)} in week {row.week}, {signed(t.myTotal)} across {weeks}{' '}
         ({verdict}); theirs {signed(t.theirThisWeek)} this week.
         {t.depth.length > 0 ? ` You would hold ${t.depth.join(' and ')}.` : ''}
       </p>
