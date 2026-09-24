@@ -1,6 +1,7 @@
 'use server';
 
 import { AdapterFailure, EspnWriter, describeError, protectedIds } from '@ds-nfl/adapters';
+import { expandStartingSlots } from '@ds-nfl/core';
 import { planLineup } from '@/lib/week';
 
 export interface MoveResult {
@@ -45,6 +46,16 @@ export async function addDropPlayer(
     }
     if (drop && protectedIds(plan.key).has(drop.platformPlayerId)) {
       return { ok: false, message: `${drop.name} is protected. Unprotect them on the Waivers page first.` };
+    }
+
+    // A full roster has nowhere to put them: say so rather than let ESPN answer with a 409.
+    const spots = expandStartingSlots(plan.league.rosterSettings).length + plan.league.rosterSettings.benchSize;
+    const held = plan.roster.filter((p) => p.currentSlot !== 'IR').length;
+    if (!drop && held >= spots) {
+      return {
+        ok: false,
+        message: `Your roster is full at ${held} of ${spots}, so ${target.name} needs someone dropped to make room.`,
+      };
     }
 
     const writer = new EspnWriter({ espnS2: plan.conn.espnS2, swid: plan.conn.swid }, (r, w) => plan.reader.getSlotMap(r, w));

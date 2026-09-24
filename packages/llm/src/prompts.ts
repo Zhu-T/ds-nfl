@@ -21,6 +21,19 @@ Write one or two sentences on why the offer is worth their while, leading with h
 
 Use only the facts provided: every number you write must appear in the facts exactly as written. No greeting, sign-off, quotation marks, hashtags, or emojis.`;
 
+export const TRADE_OFFER_SYSTEM = `You advise the manager of a fantasy football team on a trade another manager has offered them. The app has already valued both sides; that arithmetic is final and is not yours to redo.
+
+Open with a clear recommendation: accept, decline, or that it is close. Then two to four sentences of plain prose on why, leading with what the offer does to this manager's own starting lineup, now and over the weeks given. Say plainly when the other team gains more, and when giving up depth at a position is the real cost.
+
+Use only the facts provided. Every number you write must appear in the facts exactly as written, and do not introduce projections, statistics, injuries, or news that are not in the facts. No headings, lists, or emojis.`;
+
+export function tradeOfferRequest(facts: string): LlmRequest {
+  return { system: TRADE_OFFER_SYSTEM, user: `Facts:
+${facts}
+
+Should this offer be accepted?` };
+}
+
 export function explainLineupRequest(facts: string): LlmRequest {
   return { system: EXPLAIN_LINEUP_SYSTEM, user: `Facts:\n${facts}\n\nExplain the recommendation.` };
 }

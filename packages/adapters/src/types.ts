@@ -194,8 +194,14 @@ export interface TeamRoster {
  */
 export interface LeagueTransaction {
   readonly id: string;
+  /** The team that proposed it; for a trade offered to you, that is the other manager. */
   readonly teamId: string;
+  /** True when you proposed it. */
   readonly isMine: boolean;
+  /** True when it moves a player to or from your roster, however proposed it. */
+  readonly involvesMe: boolean;
+  /** For a trade: the team on the other side of yours. */
+  readonly otherTeamId?: string;
   /** "lineup" is a slot change; the rest move players between teams and the pool. */
   readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
   readonly status: 'pending' | 'executed' | 'canceled' | 'failed';
@@ -205,7 +211,7 @@ export interface LeagueTransaction {
   readonly at: string | null;
   /** The FAAB bid, in leagues with a budget. */
   readonly bid?: number;
-  /** Platform player ids coming in and going out. */
+  /** Platform player ids coming to your roster and leaving it. */
   readonly adds: readonly string[];
   readonly drops: readonly string[];
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dropCosts, horizonValues, swapValue, type Horizon, type Outlook } from './horizon.js';
+import { dropCosts, horizonValues, swapValue, tradeValue, type Horizon, type Outlook } from './horizon.js';
 import { rankWaiverCandidates } from './evaluate.js';
 import type { OptimizerPlayer } from '../lineup/optimize.js';
 import type { RosterSettings } from '../types.js';
@@ -124,5 +124,49 @@ describe('swapValue', () => {
     const v = swapValue(roster, 'RB1', p('WR3', 'WR', 11), horizon, rs);
     expect(v.byWeek[0]).toBe(-4);
     expect(v.total).toBeLessThan(0);
+  });
+});
+describe('tradeValue', () => {
+  const settings: RosterSettings = { slots: { RB: 1, WR: 1 }, benchSize: 4, irSize: 0 };
+  const p = (id: string, position: 'RB' | 'WR', pts: number): OptimizerPlayer => ({
+    gsisId: id,
+    name: id,
+    position,
+    eligibleSlots: [position],
+    projectedPoints: pts,
+    available: true,
+  });
+  it('values two players out for one better one in, across the weeks', () => {
+    const roster = [p('rb1', 'RB', 8), p('wr1', 'WR', 9), p('wr2', 'WR', 4)];
+    const star = p('star', 'WR', 20);
+    const h: Horizon = {
+      weeks: [3, 4],
+      outlooks: new Map([
+        ['rb1', { perGame: 8, offWeeks: new Set<number>() }],
+        ['wr1', { perGame: 9, offWeeks: new Set<number>() }],
+        ['wr2', { perGame: 4, offWeeks: new Set<number>() }],
+        ['star', { perGame: 20, offWeeks: new Set<number>() }],
+      ]),
+    };
+    // Giving up wr1 and wr2 for the star: the lineup gains 11 a week, twice.
+    expect(tradeValue(roster, ['wr1', 'wr2'], [star], h, settings)).toEqual({ total: 22, byWeek: [11, 11] });
+  });
+
+  it('goes negative when the trade costs you, and counts a bye in the weeks it covers', () => {
+    const roster = [p('rb1', 'RB', 8), p('wr1', 'WR', 15)];
+    const worse = p('worse', 'WR', 10);
+    const h: Horizon = {
+      weeks: [3, 4],
+      outlooks: new Map([
+        ['rb1', { perGame: 10, offWeeks: new Set<number>() }],
+        ['wr1', { perGame: 15, offWeeks: new Set<number>() }],
+        ['worse', { perGame: 10, offWeeks: new Set([4]) }],
+      ]),
+    };
+    const value = tradeValue(roster, ['wr1'], [worse], h, settings);
+    expect(value.byWeek[0]).toBe(-5);
+    // Week 4 is their bye: the whole 15 is lost.
+    expect(value.byWeek[1]).toBe(-15);
+    expect(value.total).toBe(-20);
   });
 });

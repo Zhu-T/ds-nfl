@@ -48,6 +48,7 @@ export function AddPlayerButton({
   faab,
   suggestedBid,
   horizonLabel,
+  spots,
 }: {
   leagueKey: string;
   week: number;
@@ -61,6 +62,8 @@ export function AddPlayerButton({
   suggestedBid?: number | undefined;
   /** e.g. "through week 6". */
   horizonLabel: string;
+  /** Roster spots: with none free, a drop is required rather than optional. */
+  spots: { readonly used: number; readonly total: number; readonly room: number };
 }) {
   const [open, setOpen] = useState(false);
   const [dropId, setDropId] = useState(suggestedDropId ?? '');
@@ -70,6 +73,8 @@ export function AddPlayerButton({
   const refresh = useRefresh();
   const claim = pickup === 'waivers';
   const drop = drops.find((d) => d.id === dropId);
+  // With a full roster ESPN refuses an add that drops nobody, so the app asks for one.
+  const mustDrop = spots.room === 0;
   const net = player.horizonGain - (drop?.cost ?? 0);
   // Costs within half a point count as a tie, broken by position depth, so the
   // suggested drop is often not the very cheapest. Say so rather than look wrong.
@@ -106,11 +111,13 @@ export function AddPlayerButton({
         <div className="swap__row swap__out">
           <span className="swap__mark swap__mark--out">OUT</span>
           <span className="swap__who">
-            {drop ? `${drop.name} (${drop.position})` : 'Nobody — your roster has room'}
+            {drop
+              ? `${drop.name} (${drop.position})`
+              : mustDrop
+                ? `Nobody chosen — your roster is full at ${spots.used} of ${spots.total}`
+                : `Nobody — you have ${spots.room} free ${spots.room === 1 ? 'spot' : 'spots'}`}
           </span>
-          <span className="swap__pts">
-            {drop ? `costs ${pts(drop.cost)} ${horizonLabel}` : 'no cost'}
-          </span>
+          <span className="swap__pts">{drop ? `costs ${pts(drop.cost)} ${horizonLabel}` : 'no cost'}</span>
         </div>
 
         <p className="addmove__net">
@@ -133,7 +140,7 @@ export function AddPlayerButton({
         <label className="addmove__field">
           Drop
           <select className="field__input" value={dropId} onChange={(e) => setDropId(e.target.value)}>
-            <option value="">nobody (roster has room)</option>
+            <option value="">{mustDrop ? 'choose a player to drop' : `nobody (${spots.room} free)`}</option>
             {drops.map((d) => (
               <option key={d.id} value={d.id} disabled={d.locked}>
                 {d.name} ({d.position}) — costs {pts(d.cost)}
@@ -161,7 +168,8 @@ export function AddPlayerButton({
         <button
           type="button"
           className="btn btn--primary"
-          disabled={pending}
+          disabled={pending || (mustDrop && !drop)}
+          {...(mustDrop && !drop ? { title: 'Your roster is full: choose who to drop.' } : {})}
           onClick={() =>
             start(async () => {
               const answer = await addDropPlayer(leagueKey, week, player.id, dropId || null, claim && faab ? Number(bid) : undefined);

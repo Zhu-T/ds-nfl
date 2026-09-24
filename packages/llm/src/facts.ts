@@ -146,6 +146,41 @@ export interface TradeFactsInput {
   readonly theirGain: number;
 }
 
+export interface TradeOfferFactsInput {
+  readonly week: number;
+  readonly myTeam: string;
+  readonly theirTeam: string;
+  /** Coming to you, and leaving you, with each player's projection for the week. */
+  readonly incoming: readonly { readonly name: string; readonly position: string; readonly projected: number }[];
+  readonly outgoing: readonly { readonly name: string; readonly position: string; readonly projected: number }[];
+  /** What the trade does to your best lineups: this week, and across `weeks`. */
+  readonly myThisWeek: number;
+  readonly myTotal: number;
+  readonly weeks: string;
+  /** What it does to theirs, this week. */
+  readonly theirThisWeek: number;
+  /** How many of each position you would hold afterwards, where it changes. */
+  readonly depth: readonly string[];
+}
+
+/**
+ * Facts for advice on an offer you have received. Both sides' numbers are
+ * given, unlike a pitch: the point here is to judge the deal, not sell it.
+ */
+export function tradeOfferFacts(input: TradeOfferFactsInput): string {
+  const list = (players: TradeOfferFactsInput['incoming']) =>
+    players.map((p) => `${p.name} (${p.position}, projected ${n(p.projected)})`).join(', ') || 'nobody';
+  return [
+    `${input.theirTeam} has offered ${input.myTeam} a trade, valued on week ${input.week} projections.`,
+    `${input.myTeam} would receive ${list(input.incoming)}.`,
+    `${input.myTeam} would send ${list(input.outgoing)}.`,
+    `The best possible starting lineup for ${input.myTeam} changes by ${n(input.myThisWeek)} points in week ${input.week}, and by ${n(input.myTotal)} points across ${input.weeks}.`,
+    `The best possible starting lineup for ${input.theirTeam} changes by ${n(input.theirThisWeek)} points in week ${input.week}.`,
+    ...input.depth.map((d) => `After the trade, ${input.myTeam} would hold ${d}.`),
+    'This offer has not been accepted: the decision belongs to the manager.',
+  ].join('\n');
+}
+
 /**
  * Facts for a trade pitch.
  *

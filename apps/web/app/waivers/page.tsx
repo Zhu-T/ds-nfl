@@ -4,7 +4,6 @@ import { LoadState } from '@/components/loaded';
 import { positionHue } from '@/lib/sample-league';
 import { aiStatus } from '@/lib/ai';
 import { WaiverPicksPanel } from '@/components/waiver-picks-panel';
-import { PlayerEvalPanel } from '@/components/player-eval-panel';
 import { Flags } from '@/components/flags';
 import { formShort, marketShort, matchupShort } from '@/lib/short-labels';
 import { openedRoleNote } from '@ds-nfl/core';
@@ -32,20 +31,29 @@ function suggestBid(remaining: number, gain: number, horizonGain: number): numbe
 const pctLabel = (n: number) => `${n < 1 && n > 0 ? '<1' : Math.round(n)}%`;
 
 /** Pickups ranked by how much each raises your chance of winning this week's matchup. */
-function CeilingList({ view, pickupById }: { view: CeilingView | null; pickupById: Readonly<Record<string, 'free-agent' | 'waivers'>> }) {
+function CeilingList({
+  view,
+  pickupById,
+  position,
+}: {
+  view: CeilingView | null;
+  pickupById: Readonly<Record<string, 'free-agent' | 'waivers'>>;
+  position: string | null;
+}) {
   if (!view) {
     return <p className="field__hint">There is no matchup this week to play for, so there is no win chance to raise.</p>;
   }
+  const rows = position ? view.rows.filter((r) => r.position === position) : view.rows;
   const behind = view.margin < 0;
   return (
     <>
       <p className="field__hint" style={{ marginBottom: '0.75rem', maxWidth: '46rem' }}>
         {behind ? `Projected to lose by ${(-view.margin).toFixed(1)}` : `Projected to win by ${view.margin.toFixed(1)}`} to{' '}
         {view.opponentName} on the app&apos;s projections for both lineups: about <b>{pctLabel(view.chance)}</b> to win.{' '}
-        {view.rows.length > 0
-          ? `The best pickup below raises it to ${pctLabel(view.rows[0]!.after)}.`
-          : `No available player whose game is still to come raises it.`}
-        {!behind && view.rows.length > 0 ? ' When you are ahead, This week is usually the safer ranking.' : ''}{' '}
+        {rows.length > 0
+          ? `The best ${position ? `${position} ` : ''}pickup below raises it to ${pctLabel(rows[0]!.after)}.`
+          : `No available ${position ?? 'player'} whose game is still to come raises it.`}
+        {!behind && rows.length > 0 ? ' When you are ahead, This week is usually the safer ranking.' : ''}{' '}
         <span
           className="hovernote"
           title="Each player is treated as independent, with the spread typical for their position and projection; the ceiling is the score beaten one week in ten. Games already over count as scored.">
@@ -53,7 +61,7 @@ function CeilingList({ view, pickupById }: { view: CeilingView | null; pickupByI
         </span>
       </p>
       <div className="slots">
-        {view.rows.slice(0, 25).map((r) => (
+        {rows.slice(0, 25).map((r) => (
           <div key={r.id} className="slot slot--changed" style={{ ['--slot-hue' as string]: positionHue(r.position as never) }}>
             <div className="slot__tag">{r.position}</div>
             <div>
@@ -84,11 +92,30 @@ function pickupLabel(kind: 'free-agent' | 'waivers' | undefined): string {
   return '';
 }
 
-export default async function WaiversPage({ searchParams }: { searchParams: Promise<{ sort?: string | string[] }> }) {
-  const sort = (await searchParams).sort;
+/** The positions a waiver list can be narrowed to, in lineup order. */
+const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'] as const;
+
+export default async function WaiversPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string | string[]; pos?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const sort = params.sort;
   const byWeeks = sort === 'weeks';
   const byTrend = sort === 'trending';
   const byCeiling = sort === 'ceiling';
+  const position = POSITIONS.find((p) => p === String(params.pos ?? '').toUpperCase()) ?? null;
+  // Links keep whichever of the two choices is not being changed.
+  const href = (next: { sort?: string | null; pos?: string | null }) => {
+    const query = new URLSearchParams();
+    const wanted = next.sort === undefined ? (typeof sort === 'string' ? sort : null) : next.sort;
+    const wantedPos = next.pos === undefined ? position : next.pos;
+    if (wanted) query.set('sort', wanted);
+    if (wantedPos) query.set('pos', wantedPos);
+    const q = query.toString();
+    return q ? `/waivers?${q}` : '/waivers';
+  };
   const res = await loadWaivers();
   const data = res.state === 'ok' ? res.data : null;
   const ai = aiStatus();
@@ -120,11 +147,13 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
       cost: data?.dropCostById[p.id] ?? 0,
     }))
     .sort((a, b) => a.cost - b.cost);
+  const atPosition = <T extends { player: { position: string } }>(rows: readonly T[]) =>
+    position ? rows.filter((r) => r.player.position === position) : rows;
   const shown = byTrend
-    ? rising.slice(0, 25)
-    : ordered.length > 0
-      ? ordered.slice(0, 25)
-      : (data?.candidates ?? []).slice(0, 15);
+    ? atPosition(rising).slice(0, 25)
+    : atPosition(ordered).length > 0
+      ? atPosition(ordered).slice(0, 25)
+      : atPosition(data?.candidates ?? []).slice(0, 15);
   // A running total from this week on: "through week 5".
   const through = data && data.horizonWeeks.length > 1 ? `through week ${data.horizonWeeks.at(-1)}` : 'this week';
 
@@ -173,12 +202,13 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                   projections as the estimate.
                 </span>
               </div>
-            ) : byTrend || byCeiling ? null : worth.length === 0 ? (
+            ) : byTrend || byCeiling ? null : atPosition(worth).length === 0 ? (
               <div className="notice">
                 <span className="notice__tag">Clear</span>
                 <span>
-                  Nobody on the wire improves your lineup, this week or {through}. That is a real
-                  answer — your players already beat every available one.
+                  {position ? `No available ${position} improves` : 'Nobody on the wire improves'} your lineup, this week
+                  or {through}. That is a real answer — your players already beat every available one
+                  {position ? ` at ${position}` : ''}.
                 </span>
               </div>
             ) : null}
@@ -188,28 +218,28 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
             <nav className="sortbar" aria-label="Rank by">
               <span className="field__hint">Rank by</span>
               <Link
-                href="/waivers"
+                href={href({ sort: null })}
                 className={`chip${byWeeks || byTrend || byCeiling ? '' : ' chip--on'}`}
                 aria-current={byWeeks || byTrend || byCeiling ? undefined : 'true'}
               >
                 This week
               </Link>
               <Link
-                href="/waivers?sort=weeks"
+                href={href({ sort: 'weeks' })}
                 className={`chip${byWeeks ? ' chip--on' : ''}`}
                 aria-current={byWeeks ? 'true' : undefined}
               >
                 {through.charAt(0).toUpperCase() + through.slice(1)}
               </Link>
               <Link
-                href="/waivers?sort=trending"
+                href={href({ sort: 'trending' })}
                 className={`chip${byTrend ? ' chip--on' : ''}`}
                 aria-current={byTrend ? 'true' : undefined}
               >
                 Trending adds
               </Link>
               <Link
-                href="/waivers?sort=ceiling"
+                href={href({ sort: 'ceiling' })}
                 className={`chip${byCeiling ? ' chip--on' : ''}`}
                 aria-current={byCeiling ? 'true' : undefined}
                 title="Pickups ranked by how much they raise your chance of winning this week's matchup"
@@ -217,7 +247,23 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                 High ceiling
               </Link>
             </nav>
-            {byCeiling && <CeilingList view={data.ceiling} pickupById={data.pickupById} />}
+            <nav className="sortbar" aria-label="Position">
+              <span className="field__hint">Position</span>
+              <Link href={href({ pos: null })} className={`chip${position ? '' : ' chip--on'}`} aria-current={position ? undefined : 'true'}>
+                All
+              </Link>
+              {POSITIONS.map((p) => (
+                <Link
+                  key={p}
+                  href={href({ pos: p })}
+                  className={`chip${position === p ? ' chip--on' : ''}`}
+                  aria-current={position === p ? 'true' : undefined}
+                >
+                  {p}
+                </Link>
+              ))}
+            </nav>
+            {byCeiling && <CeilingList view={data.ceiling} pickupById={data.pickupById} position={position} />}
             {byTrend && (
               <p className="field__hint" style={{ marginBottom: '0.75rem', maxWidth: '46rem' }}>
                 The available players managers across ESPN are adding most (ESPN&apos;s rostered +/-):
@@ -294,6 +340,7 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
                               data.faab ? suggestBid(data.faab.remaining, c.lineupGain, later) : undefined
                             }
                             horizonLabel={through}
+                            spots={data.spots}
                           />
                         </div>
                       ) : null}
@@ -326,15 +373,6 @@ export default async function WaiversPage({ searchParams }: { searchParams: Prom
             </div>
             {res.state === 'ok' && data.myRoster.length > 0 && (
               <ProtectedPanel leagueKey={res.key} players={data.myRoster} />
-            )}
-
-            {res.state === 'ok' && (
-              <PlayerEvalPanel
-                leagueKey={res.key}
-                week={data.week}
-                aiEnabled={ai.provider !== 'off'}
-                providerLabel={ai.judgmentLabel ?? ''}
-              />
             )}
 
             {res.state === 'ok' && (

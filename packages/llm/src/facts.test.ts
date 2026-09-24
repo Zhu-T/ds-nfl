@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lineupFacts, tradeFacts, type LineupFactsInput } from './facts.js';
+import { lineupFacts, tradeFacts, tradeOfferFacts, type LineupFactsInput } from './facts.js';
 import { checkNumbers } from './guard.js';
 
 const base: LineupFactsInput = {
@@ -95,5 +95,31 @@ describe('tradeFacts', () => {
     // pitch that states it is withheld by the guard.
     expect(facts).not.toContain('2.5');
     expect(checkNumbers('This nets me 2.5 points, and you 0.3.', facts).invented).toEqual([2.5]);
+  });
+});
+
+describe('tradeOfferFacts', () => {
+  it('gives both sides, the depth change, and never implies the offer was taken', () => {
+    const facts = tradeOfferFacts({
+      week: 3,
+      myTeam: 'your team',
+      theirTeam: 'Joan of Yard',
+      incoming: [{ name: 'Bijan Robinson', position: 'RB', projected: 18.4 }],
+      outgoing: [
+        { name: 'Davante Adams', position: 'WR', projected: 13.3 },
+        { name: 'Tyler Loop', position: 'K', projected: 8.7 },
+      ],
+      myThisWeek: 2.1,
+      myTotal: 6.4,
+      weeks: 'weeks 3-6',
+      theirThisWeek: 0.8,
+      depth: ['3 RBs instead of 2'],
+    });
+    expect(facts).toContain('your team would receive Bijan Robinson (RB, projected 18.4).');
+    expect(facts).toContain('your team would send Davante Adams (WR, projected 13.3), Tyler Loop (K, projected 8.7).');
+    expect(facts).toContain('changes by 2.1 points in week 3, and by 6.4 points across weeks 3-6');
+    expect(facts).toContain('Joan of Yard changes by 0.8 points in week 3');
+    expect(facts).toContain('3 RBs instead of 2');
+    expect(facts).toContain('has not been accepted');
   });
 });

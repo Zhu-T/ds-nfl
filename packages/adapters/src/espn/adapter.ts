@@ -658,10 +658,19 @@ export function parseTransactions(data: any, teamId: string): LeagueTransaction[
     const status = String(t?.status ?? '').toUpperCase();
     const type = String(t?.type ?? '').toUpperCase();
     const items = (t?.items ?? []) as Record<string, any>[];
+    // Every item names the team it moves to or from, which is what makes a trade
+    // readable from your side: a trade offered to you is proposed by them.
+    const to = (i: Record<string, any>) => (i?.toTeamId !== undefined ? String(i.toTeamId) : null);
+    const from = (i: Record<string, any>) => (i?.fromTeamId !== undefined ? String(i.fromTeamId) : null);
+    const me = String(teamId);
+    const mine = items.filter((i) => to(i) === me || from(i) === me);
+    const otherTeam = items.map((i) => to(i) ?? from(i)).find((t) => t !== null && t !== me && t !== '0');
     out.push({
       id,
       teamId: String(t?.teamId),
-      isMine: String(t?.teamId) === String(teamId),
+      isMine: String(t?.teamId) === me,
+      involvesMe: String(t?.teamId) === me || mine.length > 0,
+      ...(type.includes('TRADE') && otherTeam ? { otherTeamId: otherTeam } : {}),
       kind:
         type === 'WAIVER'
           ? 'waivers'
@@ -679,8 +688,14 @@ export function parseTransactions(data: any, teamId: string): LeagueTransaction[
       week: Number(t?.scoringPeriodId ?? 0),
       at: typeof t?.proposedDate === 'number' ? new Date(t.proposedDate).toISOString() : null,
       ...(typeof t?.bidAmount === 'number' && t.bidAmount > 0 ? { bid: t.bidAmount } : {}),
-      adds: items.filter((i) => String(i?.type).toUpperCase() === 'ADD').map((i) => String(i.playerId)),
-      drops: items.filter((i) => String(i?.type).toUpperCase() === 'DROP').map((i) => String(i.playerId)),
+      // Coming to you and leaving you, by the team on each item; the item's own
+      // ADD/DROP is the fallback for rows that carry no team.
+      adds: items
+        .filter((i) => (to(i) !== null || from(i) !== null ? to(i) === me : String(i?.type).toUpperCase() === 'ADD'))
+        .map((i) => String(i.playerId)),
+      drops: items
+        .filter((i) => (to(i) !== null || from(i) !== null ? from(i) === me : String(i?.type).toUpperCase() === 'DROP'))
+        .map((i) => String(i.playerId)),
     });
   }
   return out;

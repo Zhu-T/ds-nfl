@@ -29,23 +29,29 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 /**
- * Evaluate any one player: type a name, get what they would add to your best
- * lineup this week, on the same numbers as the waiver ranking below it; then
- * the last week of news on them from the web, and, with AI on, a reading of
- * that news that values them again if it changes their outlook.
+ * One player, evaluated: what they would add to your best lineup this week, on
+ * the same numbers the waiver ranking uses; then the last week of news on them
+ * from the web, and, with AI on, a reading of that news that values them again
+ * if it changes their outlook.
+ *
+ * Opened from a row on the Players page, so the player is already known: there
+ * is no name to type and nothing to disambiguate.
  */
-export function PlayerEvalPanel({
+export function PlayerEvaluation({
   leagueKey,
   week,
+  playerId,
+  name,
   aiEnabled,
   providerLabel,
 }: {
   leagueKey: string;
   week: number;
+  playerId: string;
+  name: string;
   aiEnabled: boolean;
   providerLabel: string;
 }) {
-  const [query, setQuery] = useState('');
   const [pending, start] = useTransition();
   const [result, setResult] = useState<EvaluateResult | null>(null);
   // The web search and the AI read each follow the step before, so the numbers never wait on them.
@@ -53,6 +59,17 @@ export function PlayerEvalPanel({
   const [web, setWeb] = useState<{ id: string; result: WebNewsResult } | null>(null);
   const [reading, startRead] = useTransition();
   const [read, setRead] = useState<{ id: string; result: NewsReadResult } | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    start(async () => {
+      const answer = await evaluatePlayerAction(leagueKey, week, name, playerId);
+      if (current) start(() => setResult(answer));
+    });
+    return () => {
+      current = false;
+    };
+  }, [leagueKey, week, playerId, name]);
 
   const evaluatedId = result?.ok && result.result.kind === 'evaluated' ? result.result.evaluation.id : null;
   useEffect(() => {
@@ -80,59 +97,14 @@ export function PlayerEvalPanel({
     };
   }, [webForRead, leagueKey, week]);
 
-  const run = (id?: string) =>
-    start(async () => {
-      const answer = await evaluatePlayerAction(leagueKey, week, query, id);
-      start(() => setResult(answer));
-    });
-
   return (
-    <section className="webnews" aria-live="polite">
-      <div className="webnews__head">
-        <div>
-          <h3 className="webnews__title">Evaluate a player</h3>
-          <p className="field__hint">
-            Anyone in the league: what they would add to your lineup in week {week}, or what one of yours
-            is worth, with recent news{aiEnabled ? ` read by ${providerLabel}` : ''}.
-          </p>
-        </div>
-      </div>
-
-      <form
-        className="evaluate__form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          run();
-        }}
-      >
-        <input
-          type="search"
-          className="field__input"
-          placeholder="Player name, e.g. Tyler Shough"
-          aria-label="Player to evaluate"
-          value={query}
-          maxLength={60}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button type="submit" className="btn" disabled={pending || query.trim().length < 2}>
-          {pending ? 'Evaluating…' : 'Evaluate'}
-        </button>
-      </form>
-
+    <div className="evaluate" aria-live="polite">
+      {pending && !result && <p className="field__hint">Evaluating {name}…</p>}
       {result && !result.ok && <p className="ai__error">{result.message}</p>}
-      {result?.ok && result.result.kind === 'none' && <p className="field__hint">{result.result.message}</p>}
-      {result?.ok && result.result.kind === 'choose' && (
-        <div className="evaluate__choices">
-          <span className="field__hint">Several players match. Which one?</span>
-          {result.result.matches.map((m) => (
-            <button key={m.id} type="button" className="chip" disabled={pending} onClick={() => run(m.id)}>
-              {m.name} · {m.position}
-              {m.proTeam ? `, ${m.proTeam}` : ''} · {m.owner}
-            </button>
-          ))}
-        </div>
+      {result?.ok && result.result.kind !== 'evaluated' && (
+        <p className="field__hint">
+          {result.result.kind === 'none' ? result.result.message : `${name} could not be pinned down in this league.`}
+        </p>
       )}
       {result?.ok && result.result.kind === 'evaluated' && (
         <Evaluation
@@ -145,7 +117,7 @@ export function PlayerEvalPanel({
           providerLabel={providerLabel}
         />
       )}
-    </section>
+    </div>
   );
 }
 

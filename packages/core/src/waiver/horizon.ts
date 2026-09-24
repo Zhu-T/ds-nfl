@@ -157,3 +157,31 @@ export function swapValue(
   );
   return { total: round2(byWeek.reduce((sum, x) => sum + x, 0)), byWeek };
 }
+
+/**
+ * What a whole trade does to your best lineups: several players out, several
+ * in, priced week by week like `swapValue`. Negative when the trade hurts.
+ *
+ * A real offer is rarely one-for-one, and the sides can be uneven — two for one
+ * leaves a roster spot open, which costs nothing here because an empty spot
+ * starts nobody either way.
+ */
+export function tradeValue(
+  roster: readonly OptimizerPlayer[],
+  outgoingIds: readonly string[],
+  incoming: readonly OptimizerPlayer[],
+  horizon: Horizon,
+  settings: RosterSettings,
+): HorizonValue {
+  const leaving = new Set(outgoingIds);
+  const weeks = weeksOf(roster, horizon, settings);
+  const byWeek = weeks.map((w, i) =>
+    round2(
+      optimizeLineup(
+        [...w.players.filter((p) => !leaving.has(p.gsisId)), ...incoming.map((p) => inWeek(p, horizon, i))],
+        settings,
+      ).projectedPoints - w.points,
+    ),
+  );
+  return { total: round2(byWeek.reduce((sum, x) => sum + x, 0)), byWeek };
+}

@@ -140,6 +140,10 @@ value.
   the best chance of winning next to the best-projected one, with both chances. It has its
   own Apply, which recomputes that lineup on the server. It never replaces the main lineup
   or its Apply.
+- **By position.** A second row of chips narrows any of the rankings to QB, RB, WR, TE, K or
+  D/ST, which is how you shop for one hole rather than reading the whole wire. The two
+  choices are independent: picking RB keeps the ranking you were on, and switching ranking
+  keeps the position.
 - **This week or through week N.** A switch ranks by this week's gain or by the running
   total from this week through the three after it ("Through week 5" in week 2). Later weeks use ESPN's rest-of-season projection
   per game and each NFL team's bye weeks, so a player who would sit now but covers a bye or
@@ -176,9 +180,9 @@ value.
 - Only articles from the last 7 days are read, as for the news check below.
 - The ranking itself is unchanged, because the press often recommends players for the
   weeks after this one.
-- **Evaluate a player**, at the top of the Waivers page, takes any name. Rostered players
-  are matched in the league's rosters ("jamarr" finds Ja'Marr Chase) and everyone else
-  through ESPN's name search; when several match, you pick one. It shows:
+- **Evaluate** sits on every row of the **Players** page: click it and the evaluation opens
+  under that row, for anyone in the league. Nothing is typed, so nothing has to be matched by
+  name or disambiguated — the row already knows who it is. It shows:
   - where the player is: free agent, waivers, another team, or your roster;
   - their projection, ESPN's with betting lines and news applied, and their game;
   - what they would add to your best lineup, the slot they would fill, and who they
@@ -348,7 +352,10 @@ sides of the move before anything is written:
 - **In:** the player, their projection, what they add to your lineup this week and across the
   coming weeks, and the starter they would displace.
 - **Out:** whoever you pick to drop, and what losing them costs your lineups over those
-  weeks. Every one of your players is listed with their cost, cheapest first, and protected
+  weeks. When your roster is full — everyone not on IR, against the starting slots plus the
+  bench — a drop is required, and the confirmation says so ("your roster is full at 15 of
+  15") rather than offering to add nobody. The server checks it again, so a full roster is
+  never sent to ESPN to be refused. Every one of your players is listed with their cost, cheapest first, and protected
   players are left out. When the suggested drop is not the cheapest, it says why: costs
   within half a point are a tie, broken by the position where you have most spare players.
 - **Net** over those weeks, and whether this goes through at once or waits for the waiver run.
@@ -356,8 +363,9 @@ sides of the move before anything is written:
 
 Confirming writes through the same transactions endpoint lineups use.
 
-**Pending** is its own page: what you have put in and not yet had settled, when the waivers
-run in your league, and how your last few moves actually ended — went through, cancelled, or
+**Pending** is its own page: what you have put in and not yet had settled, **trades another
+manager has offered you**, when the waivers run in your league, and how your last few moves
+actually ended — went through, cancelled, or
 failed, with ESPN's reason. Waivers links to it, marks a player you have already claimed as
 "claim pending" so they cannot be claimed twice, and leaves a player already on the way out
 off the drop list. The League AI is told about them too.
@@ -366,6 +374,12 @@ Working out what is really pending takes care, because ESPN's log is append-only
 
 - Cancelling a claim **appends** a `CANCELED` row and leaves the original saying `PENDING`.
 - Claims whose drop player has since gone stay `PENDING` for ever.
+
+**A trade offered to you** is shown with both sides valued: what it does to your best lineups
+this week and across the coming weeks, what it does to theirs, and where your depth at a
+position changes. With AI on, **Should I take it?** asks the model, which argues only from
+those numbers — an answer containing a number the app did not produce is withheld, as
+everywhere else. Accepting or declining is still done on ESPN.
 
 So a claim counts as live only when nothing later settled the same swap and the players still
 make sense against your roster; the rest are folded away as "ESPN still lists these but they

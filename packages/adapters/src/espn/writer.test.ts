@@ -150,3 +150,40 @@ describe('parseTransactions', () => {
     expect(rows.find((r) => r.id === 'other')!.isMine).toBe(false);
   });
 });
+
+describe('parseTransactions on a trade', () => {
+  it("reads a trade offered to you from your side, and names the other team", async () => {
+    const { parseTransactions } = await import('./adapter.js');
+    // Proposed by team 9: their Bijan Robinson for your Ja'Marr Chase and Tyler Loop.
+    const [trade] = parseTransactions(
+      {
+        transactions: [
+          {
+            id: 't1',
+            teamId: 9,
+            type: 'TRADE_PROPOSAL',
+            status: 'PENDING',
+            scoringPeriodId: 3,
+            proposedDate: 1_790_000_000_000,
+            items: [
+              { playerId: 100, type: 'TRADE', fromTeamId: 9, toTeamId: 4 },
+              { playerId: 200, type: 'TRADE', fromTeamId: 4, toTeamId: 9 },
+              { playerId: 300, type: 'TRADE', fromTeamId: 4, toTeamId: 9 },
+            ],
+          },
+        ],
+      },
+      '4',
+    );
+    expect(trade).toMatchObject({
+      kind: 'trade',
+      status: 'pending',
+      // Theirs, so not "mine", but it is still your trade to answer.
+      isMine: false,
+      involvesMe: true,
+      otherTeamId: '9',
+      adds: ['100'],
+      drops: ['200', '300'],
+    });
+  });
+});

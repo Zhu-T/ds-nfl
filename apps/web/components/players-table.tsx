@@ -1,9 +1,10 @@
 'use client';
 
-import { useDeferredValue, useMemo, useState } from 'react';
+import { Fragment, useDeferredValue, useMemo, useState } from 'react';
 import type { OwnerKind, PlayerRow } from '@/lib/league-data';
 import { searchPlayers } from '@/lib/player-search';
 import { positionHue } from '@/lib/sample-league';
+import { PlayerEvaluation } from './player-evaluation';
 import type { Position } from '@ds-nfl/core';
 
 const OWNER_CLASS: Record<OwnerKind, string> = {
@@ -32,7 +33,22 @@ function whoMatches(who: Who, kind: OwnerKind): boolean {
 }
 
 /** The Players table: filters and a search box over the rows already loaded, drawn a page at a time. */
-export function PlayersTable({ rows }: { rows: readonly PlayerRow[] }) {
+export function PlayersTable({
+  rows,
+  leagueKey,
+  week,
+  aiEnabled,
+  providerLabel,
+}: {
+  rows: readonly PlayerRow[];
+  /** Null on the sample roster, where there is nothing real to evaluate. */
+  leagueKey: string | null;
+  week: number;
+  aiEnabled: boolean;
+  providerLabel: string;
+}) {
+  // One open evaluation at a time: it is a wide panel inside the table.
+  const [openId, setOpenId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [position, setPosition] = useState<(typeof POSITIONS)[number]>('All');
   const [who, setWho] = useState<Who>('all');
@@ -113,27 +129,56 @@ export function PlayersTable({ rows }: { rows: readonly PlayerRow[] }) {
               <th>Owner</th>
               <th>Status</th>
               <th className="table__num">Proj</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <span className="dot" style={{ ['--slot-hue' as string]: positionHue(r.position as Position) }} />
-                  {r.name}
-                </td>
-                <td className="table__dim">{r.position}</td>
-                <td className="table__dim">{r.proTeam ?? '—'}</td>
-                <td>
-                  <span className={OWNER_CLASS[r.ownerKind]}>{r.owner}</span>
-                </td>
-                <td className="table__dim">{r.note ?? '—'}</td>
-                <td className="table__num">{r.projected.toFixed(1)}</td>
-              </tr>
+              <Fragment key={r.id}>
+                <tr>
+                  <td>
+                    <span className="dot" style={{ ['--slot-hue' as string]: positionHue(r.position as Position) }} />
+                    {r.name}
+                  </td>
+                  <td className="table__dim">{r.position}</td>
+                  <td className="table__dim">{r.proTeam ?? '—'}</td>
+                  <td>
+                    <span className={OWNER_CLASS[r.ownerKind]}>{r.owner}</span>
+                  </td>
+                  <td className="table__dim">{r.note ?? '—'}</td>
+                  <td className="table__num">{r.projected.toFixed(1)}</td>
+                  <td className="table__num">
+                    {leagueKey && (
+                      <button
+                        type="button"
+                        className="btn btn--ghost"
+                        aria-expanded={openId === r.id}
+                        onClick={() => setOpenId(openId === r.id ? null : r.id)}
+                      >
+                        {openId === r.id ? 'Close' : 'Evaluate'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+                {openId === r.id && leagueKey && (
+                  <tr className="table__panel">
+                    <td colSpan={7}>
+                      <PlayerEvaluation
+                        leagueKey={leagueKey}
+                        week={week}
+                        playerId={r.id}
+                        name={r.name}
+                        aiEnabled={aiEnabled}
+                        providerLabel={providerLabel}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {shown.length === 0 && (
               <tr>
-                <td colSpan={6} className="table__dim">
+                <td colSpan={7} className="table__dim">
                   No player matches{deferred.trim() ? <> &ldquo;{deferred.trim()}&rdquo;</> : ' these filters'}. The list holds
                   every rostered player and the top unrostered ones.
                 </td>

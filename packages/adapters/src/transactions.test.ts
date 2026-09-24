@@ -6,6 +6,7 @@ const move = (id: string, status: LeagueTransaction['status'], at: string, adds:
   id,
   teamId: '4',
   isMine: true,
+  involvesMe: true,
   kind: 'waivers',
   status,
   week: 3,

@@ -1,12 +1,14 @@
 import { loadPlayers } from '@/lib/league-data';
 import { LoadState } from '@/components/loaded';
 import { PlayersTable } from '@/components/players-table';
+import { aiStatus } from '@/lib/ai';
 
 export const dynamic = 'force-dynamic';
 
 export default async function PlayersPage() {
   const res = await loadPlayers();
   const data = res.state === 'ok' ? res.data : null;
+  const ai = aiStatus();
 
   return (
     <LoadState state={res.state} {...(res.state === 'error' ? { message: res.message } : {})}>
@@ -22,12 +24,20 @@ export default async function PlayersPage() {
             <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
               Every player on a roster in your league and who has him, plus the most-owned players
               nobody has. Those are either on <strong>waivers</strong> — you put in a claim and it
-              processes later — or <strong>free agents</strong> you can add right now.
+              processes later — or <strong>free agents</strong> you can add right now.{' '}
+              <strong>Evaluate</strong> on any row shows what they would add to your lineup, or what one
+              of yours is worth, with the last week of news on them.
             </p>
           </section>
 
           <section className="section">
-            <PlayersTable rows={data.rows} />
+            <PlayersTable
+              rows={data.rows}
+              leagueKey={res.state === 'ok' ? res.key : null}
+              week={data.week}
+              aiEnabled={ai.provider !== 'off'}
+              providerLabel={ai.judgmentLabel ?? ''}
+            />
           </section>
         </>
       )}

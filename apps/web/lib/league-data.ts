@@ -12,8 +12,10 @@ import {
   applyMatchups,
   applyNewsFindings,
   dropCosts,
+  expandStartingSlots,
   horizonValues,
   swapValue,
+  tradeValue,
   openedRoleNote,
   type DropSuggestion,
   type HorizonValue,
@@ -45,6 +47,7 @@ import {
   AdapterFailure,
   parseEspnScoring,
   type LeagueInfo,
+  type LeagueTransaction,
   type LeagueRef,
   type RosterPlayer,
   type GatherResult,
@@ -209,6 +212,12 @@ export interface WaiverView {
   }[];
   /** The FAAB budget and what is left of it; null in leagues that use waiver order. */
   readonly faab: { readonly budget: number; readonly remaining: number } | null;
+  /**
+   * Roster spots: players held against starting slots plus bench, and whether a
+   * pickup can land without dropping anyone. IR does not count as a spot a new
+   * player could take.
+   */
+  readonly spots: { readonly used: number; readonly total: number; readonly room: number };
   /** Claims you have already put in, which ESPN has not settled yet. */
   readonly pending: readonly PendingMove[];
 }
@@ -390,6 +399,7 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
       trendById,
       ceiling,
       pending,
+      spots: rosterSpots(league.rosterSettings, roster.players),
       myRoster: roster.players.map((p) => ({
         id: p.platformPlayerId,
         name: p.name,
@@ -1070,6 +1080,21 @@ export function loadSeason(key?: string | null, requestedWeek?: number | null): 
   });
 }
 
+export interface TradeOfferValue {
+  readonly otherTeam: string;
+  /** The players moving, with the projections the app prices them at. */
+  readonly incoming: readonly { readonly name: string; readonly position: string; readonly projected: number }[];
+  readonly outgoing: readonly { readonly name: string; readonly position: string; readonly projected: number }[];
+  /** What it does to your best lineups: this week, and across the weeks valued. */
+  readonly myThisWeek: number;
+  readonly myTotal: number;
+  readonly weeks: readonly number[];
+  /** What it does to theirs, this week. */
+  readonly theirThisWeek: number;
+  /** Positions where your depth changes, e.g. "2 RBs instead of 3". */
+  readonly depth: readonly string[];
+}
+
 export interface PendingRow {
   readonly id: string;
   readonly kind: 'waivers' | 'free-agent' | 'trade' | 'lineup' | 'other';
@@ -1082,6 +1107,8 @@ export interface PendingRow {
   readonly drops: readonly string[];
   /** False when the claim can no longer happen: the drop has gone, or the add already landed. */
   readonly live: boolean;
+  /** For a trade offered to you: both sides valued. */
+  readonly trade?: TradeOfferValue;
 }
 
 export interface PendingView {
@@ -1096,9 +1123,10 @@ export interface PendingView {
 
 /** Moves waiting to happen, and the ones that have just settled. */
 export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
-  return load(key, async (reader, ref, league) => {
+  return load(key, async (reader, ref, league, connKey) => {
     const [log, roster] = await Promise.all([reader.getTransactions(ref), reader.getRoster(ref, league.currentWeek)]);
-    const mine = log.filter((t) => t.isMine && t.kind !== 'lineup');
+    // Trades offered to you are proposed by the other manager, so "involves me" rather than "mine".
+    const mine = log.filter((t) => t.involvesMe && t.kind !== 'lineup');
 
     // Names for every player named in the rows shown.
     const shown = [...mine.filter((t) => t.status === 'pending'), ...settledFirst(mine).slice(0, 8)];
@@ -1123,13 +1151,86 @@ export function loadPending(key?: string | null): Promise<Loaded<PendingView>> {
       live: liveIds.has(t.id),
     });
 
+    // Each offer valued on both sides, so the page and the model argue from the same numbers.
+    const offers = new Map<string, TradeOfferValue>();
+    for (const t of mine.filter((x) => x.kind === 'trade' && x.status === 'pending' && liveIds.has(x.id))) {
+      const valued = await tradeOfferValue(reader, ref, league, connKey, t).catch(() => null);
+      if (valued) offers.set(t.id, valued);
+    }
+
     return {
-      pending: mine.filter((t) => t.status === 'pending').map(row),
+      pending: mine
+        .filter((t) => t.status === 'pending')
+        .map((t) => ({ ...row(t), ...(offers.has(t.id) ? { trade: offers.get(t.id)! } : {}) })),
       settled: settledFirst(mine).slice(0, 8).map(row),
       waiverRun: league.waiverRun,
       readAt: new Date().toISOString(),
     };
   });
+}
+
+/**
+ * A trade offer priced on both sides, the way the Trades page prices its ideas:
+ * your lineups across the coming weeks, and theirs for the week in play.
+ */
+async function tradeOfferValue(
+  reader: EspnReader,
+  ref: any,
+  league: LeagueInfo,
+  connKey: string,
+  offer: LeagueTransaction,
+): Promise<TradeOfferValue | null> {
+  const { week, findings, market, matchups, formOn } = await weekFor(reader, ref, league, connKey, null);
+  const [teams, all] = await Promise.all([reader.getTeams(ref), reader.getAllRosters(ref, week)]);
+  const myId = String(ref.teamId);
+  const theirId = offer.otherTeamId ?? offer.teamId;
+  const myRoster = all.get(myId) ?? [];
+  const theirRoster = all.get(theirId) ?? [];
+  if (myRoster.length === 0 || theirRoster.length === 0) return null;
+
+  const mine = applyNewsFindings(priced(myRoster, market, matchups, formOn), findings);
+  const theirs = priced(theirRoster, market, matchups, formOn);
+  const incoming = theirs.filter((p) => offer.adds.includes(p.gsisId));
+  const outgoing = mine.filter((p) => offer.drops.includes(p.gsisId));
+  if (incoming.length === 0 && outgoing.length === 0) return null;
+
+  const horizon = await horizonFor(reader, ref, league, week, [...myRoster, ...theirRoster]);
+  const settings = league.rosterSettings;
+  const myValue = tradeValue(mine, offer.drops, incoming, horizon, settings);
+  const theirValue = tradeValue(theirs, offer.adds, outgoing, { weeks: [week], outlooks: horizon.outlooks }, settings);
+
+  // Where the trade changes how many you hold at a position, which a raw points total hides.
+  const before = new Map<string, number>();
+  for (const p of mine) before.set(p.position, (before.get(p.position) ?? 0) + 1);
+  const after = new Map(before);
+  for (const p of outgoing) after.set(p.position, (after.get(p.position) ?? 0) - 1);
+  for (const p of incoming) after.set(p.position, (after.get(p.position) ?? 0) + 1);
+  const depth = [...after]
+    .filter(([position, count]) => count !== before.get(position))
+    .map(([position, count]) => `${count} ${position}${count === 1 ? '' : 's'} instead of ${before.get(position) ?? 0}`);
+
+  const row = (p: OptimizerPlayer) => ({ name: p.name, position: p.position, projected: round1(p.projectedPoints) });
+  return {
+    otherTeam: teams.find((t) => String(t.teamId) === String(theirId))?.name ?? `Team ${theirId}`,
+    incoming: incoming.map(row),
+    outgoing: outgoing.map(row),
+    myThisWeek: myValue.byWeek[0] ?? 0,
+    myTotal: myValue.total,
+    weeks: horizon.weeks,
+    theirThisWeek: theirValue.total,
+    depth,
+  };
+}
+
+/**
+ * How full a roster is: everyone not on IR, against the starting slots plus the
+ * bench. A pickup needs a free spot or a drop, and ESPN refuses the transaction
+ * otherwise.
+ */
+function rosterSpots(settings: RosterSettings, players: readonly RosterPlayer[]) {
+  const total = expandStartingSlots(settings).length + settings.benchSize;
+  const used = players.filter((p) => p.currentSlot !== 'IR').length;
+  return { used, total, room: Math.max(0, total - used) };
 }
 
 /** Settled rows, newest first. */

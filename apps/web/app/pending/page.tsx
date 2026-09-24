@@ -1,5 +1,7 @@
 import { LoadState } from '@/components/loaded';
 import { loadPending, type PendingRow } from '@/lib/league-data';
+import { TradeOffer } from '@/components/trade-offer';
+import { aiStatus } from '@/lib/ai';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +50,9 @@ const OUTCOME: Record<Exclude<PendingRow['status'], 'pending'>, string> = {
 export default async function PendingPage() {
   const res = await loadPending();
   const data = res.state === 'ok' ? res.data : null;
-  const live = data?.pending.filter((p) => p.live) ?? [];
+  const ai = aiStatus();
+  const offers = data?.pending.filter((p) => p.live && p.trade) ?? [];
+  const live = data?.pending.filter((p) => p.live && !p.trade) ?? [];
   const stale = data?.pending.filter((p) => !p.live) ?? [];
   const schedule = runsAt(data?.waiverRun ?? null);
 
@@ -65,17 +69,36 @@ export default async function PendingPage() {
               </span>
             </div>
             <p className="field__hint" style={{ marginBottom: '1rem', maxWidth: '46rem' }}>
-              Moves you have put in that the platform has not settled. Your roster does not change until it does, so
-              nothing here is counted in projections, lineups or waiver value. This page is read from ESPN each time you
-              open it.
+              Moves waiting to settle: claims you have put in, and trades another manager has offered you. Your roster
+              does not change until they settle, so nothing here is counted in projections, lineups or waiver value.
+              This page is read from ESPN each time you open it.
             </p>
 
-            {live.length === 0 ? (
+            {offers.length > 0 && res.state === 'ok' && (
+              <div className="slots" style={{ marginBottom: '1rem' }}>
+                {offers.map((row) => (
+                  <div key={row.id} className="slot slot--changed" style={{ ['--slot-hue' as string]: 'var(--pos-wr)' }}>
+                    <div className="slot__tag">TRADE</div>
+                    <TradeOffer
+                      row={row}
+                      leagueKey={res.key}
+                      aiEnabled={ai.provider !== 'off'}
+                      providerLabel={ai.judgmentLabel ?? ''}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {live.length === 0 && offers.length === 0 ? (
               <div className="notice">
                 <span className="notice__tag">Clear</span>
-                <span>Nothing is waiting. Claims you put in from the Waivers page show up here until they settle.</span>
+                <span>
+                  Nothing is waiting. Claims you put in from the Waivers page, and trades another manager offers you,
+                  show up here until they settle.
+                </span>
               </div>
-            ) : (
+            ) : live.length > 0 ? (
               <div className="slots">
                 {live.map((row) => (
                   <div key={row.id} className="slot slot--changed" style={{ ['--slot-hue' as string]: 'var(--accent)' }}>
@@ -95,7 +118,7 @@ export default async function PendingPage() {
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
 
             {stale.length > 0 && (
               <details className="fold">
