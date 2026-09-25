@@ -118,7 +118,11 @@ too ("wr det", "waivers", a fantasy team name).
 
 **Waivers.** Available players are ranked by what each would add to your starting lineup
 for the week shown: the optimizer runs with the player added, and the difference is the
-value.
+value. This week's figure is measured against the lineup as it actually stands, locks
+included, since a player whose game has kicked off can be neither replaced nor started —
+so once a slot is locked, a pickup adds nothing to it this week, and the coming-weeks
+column is where their value shows. The coming weeks themselves are priced with no locks
+at all.
 
 - The players considered are the 150 best projected for that week plus the 50 most
   rostered, plus the 40 being added most across ESPN.
@@ -339,8 +343,12 @@ With the local model it is free, and takes a few minutes.
 A page grading the app against what happened, from the weekly results below. Only players
 priced **before kickoff** count, so nothing is scored with hindsight.
 
-- Each week: what you scored, what the recommended lineup would have, the best possible, and
-  what the bench outscored the lineup by.
+- Each week: whether you won or lost and by how much, against whom, what the recommended
+  lineup would have scored, the best possible, and what the bench outscored the lineup by.
+  The scores are the league's own totals, since those are what counted. A week you did not
+  win also says whether the recommended lineup would have beaten your opponent's score, or
+  whether only a perfect lineup would have, or whether nothing on your roster would.
+  Weeks recorded before this was kept have their result filled in on the next page load.
 - Each adjustment judged **on its own**: the projection that went out against the same
   projection with that one factor removed. Betting lines are compared with ESPN's number;
   the opponent and form factors are divided back out. Under 40 player-weeks it says "too
@@ -550,8 +558,10 @@ applies them. With nothing connected it falls back to a clearly-labelled sample 
 Lineup writes go straight to ESPN's transactions endpoint as plain HTTP with the same
 cookies the reads use — no browser automation. A write is only reported as done after
 the roster is read back and matches. Players whose game has kicked off are locked: the
-optimizer holds them in place, and the writer refuses them up front by name rather than
-letting ESPN reject the request.
+optimizer holds them in place — a locked starter keeps their slot, and a locked bench
+player stays benched however well they did, since ESPN will not take them into a lineup
+afterwards — and the writer refuses them up front by name rather than letting ESPN reject
+the request. A padlock beside the name marks them.
 
 Not built yet: **executing** adds, drops, and trades (the waiver and trade pages advise;
 you still make the move on ESPN), projections of our own (which Sleeper leagues need,

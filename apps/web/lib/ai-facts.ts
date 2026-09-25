@@ -89,6 +89,8 @@ export function lineupFactsInput(view: WeekView): LineupFactsInput {
           opponentBest: view.matchup.opponentBasis === 'best',
           marginNow: view.matchup.marginNow,
           marginAfter: view.matchup.marginAfter,
+          myLive: view.matchup.myLive,
+          opponentLive: view.matchup.opponentLive,
         }
       : null,
   };

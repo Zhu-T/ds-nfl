@@ -37,6 +37,12 @@ describe('lineupFacts', () => {
     expect(facts).toContain('Margin after the changes: -3.2');
   });
 
+  it('gives the score so far once the week is under way, and not before', () => {
+    expect(lineupFacts({ ...base, matchup: { ...base.matchup!, myLive: 0, opponentLive: 0 } })).not.toContain('Score so far');
+    const facts = lineupFacts({ ...base, matchup: { ...base.matchup!, myLive: 62.4, opponentLive: 71 } });
+    expect(facts).toContain('Score so far: you 62.4, Joan of Yard 71');
+  });
+
   it('says plainly when there is nothing to change', () => {
     expect(lineupFacts({ ...base, moves: [] })).toContain('Recommended changes: none.');
   });

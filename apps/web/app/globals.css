@@ -197,6 +197,14 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* Points on the board, under the projection they are already counted in. */
+.scorebug__sub {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
 .scorebug__seg--team {
   align-items: flex-end;
   text-align: right;
@@ -561,6 +569,7 @@ body {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+  text-align: right;
 }
 
 .flag {
@@ -1777,6 +1786,24 @@ form.weektoggle {
 
 .flag--plain {
   color: var(--text-muted);
+}
+
+/* A locked player cannot be moved at all, so the tag is the gold accent rather
+   than another muted note: it is the one flag that changes what you can do. */
+.flag--lock {
+  color: var(--accent);
+}
+
+/* Beside a name rather than among the notes under it, so it needs its own gap. */
+.lock-tag {
+  margin-left: 0.4em;
+}
+
+/* Sized from the text it sits in, and drawn in that text's colour. */
+.flag__icon {
+  width: 0.8em;
+  height: 0.96em;
+  vertical-align: -0.14em;
 }
 
 /* A web pick on one line; its reason and sources open on click. */

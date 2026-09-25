@@ -64,6 +64,9 @@ export interface LineupFactsInput {
     readonly opponentBest?: boolean;
     readonly marginNow: number;
     readonly marginAfter: number;
+    /** Points on the board so far, both sides; absent before the week starts. */
+    readonly myLive?: number;
+    readonly opponentLive?: number;
   } | null;
 }
 
@@ -86,6 +89,9 @@ export function lineupFacts(input: LineupFactsInput): string {
     lines.push(
       `Matchup: against ${m.opponent}, who project ${n(m.opponentProjected)}${m.opponentBest ? ' with their best lineup' : ''}. Margin with the current lineup: ${signed(m.marginNow)}. Margin after the changes: ${signed(m.marginAfter)}.`,
     );
+    if (m.myLive !== undefined && m.opponentLive !== undefined && (m.myLive > 0 || m.opponentLive > 0)) {
+      lines.push(`Score so far: you ${n(m.myLive)}, ${m.opponent} ${n(m.opponentLive)}. Those points are already inside both projections.`);
+    }
   }
 
   if (input.moves.length === 0) {

@@ -16,8 +16,13 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const { league, optimal, diff, currentPoints, isSample, matchup, currentWeek, finalWeek } = await loadWeek();
+  const { league, optimal, diff, currentPoints, isSample, matchup, currentWeek, finalWeek, lockedCount } =
+    await loadWeek();
   const gain = diff.pointsGained;
+  // Shown from the first kickoff of the week, which a locked player marks even
+  // while both sides are still on nothing. Before that a row of zeroes would
+  // only be noise.
+  const playing = matchup !== null && (lockedCount > 0 || matchup.myLive > 0 || matchup.opponentLive > 0);
 
   return (
     // suppressHydrationWarning is required, not a workaround: the script below
@@ -34,17 +39,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <header className="scorebug">
           <div className="scorebug__seg scorebug__seg--brand">ds·nfl</div>
 
+          {/* League and format in one segment: two labels for one fact crowded the bar. */}
           <div className="scorebug__seg scorebug__seg--secondary">
             <span className="scorebug__label">League</span>
             <span className="scorebug__value">
               {league.name}
               {isSample ? ' (sample)' : ''}
             </span>
-          </div>
-
-          <div className="scorebug__seg scorebug__seg--secondary">
-            <span className="scorebug__label">Format</span>
-            <span className="scorebug__value">{league.format}</span>
+            <span className="scorebug__sub">{league.format}</span>
           </div>
 
           <div className="scorebug__seg scorebug__seg--secondary">
@@ -60,11 +62,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
           {matchup ? (
             <>
+              {/* Once the games are on, the score is the headline and the
+                  projection the note under it, as a scoreboard reads. */}
               <div className="scorebug__seg scorebug__seg--team">
                 <span className="scorebug__label">You</span>
                 <span className="scorebug__value scorebug__value--big">
-                  {matchup.myProjected.toFixed(1)}
+                  {(playing ? matchup.myLive : matchup.myProjected).toFixed(1)}
                 </span>
+                {playing && <span className="scorebug__sub">{matchup.myProjected.toFixed(1)} projected</span>}
               </div>
 
               <div className="scorebug__seg scorebug__seg--vs">vs</div>
@@ -72,29 +77,33 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="scorebug__seg scorebug__seg--team">
                 <span className="scorebug__label">{matchup.opponentName}</span>
                 <span className="scorebug__value scorebug__value--big">
-                  {matchup.opponentProjected.toFixed(1)}
+                  {(playing ? matchup.opponentLive : matchup.opponentProjected).toFixed(1)}
                 </span>
+                {playing && <span className="scorebug__sub">{matchup.opponentProjected.toFixed(1)} projected</span>}
               </div>
 
-              {matchup.winChance !== null && (
-                <div className="scorebug__seg scorebug__seg--secondary">
-                  <span className="scorebug__label">Win chance</span>
+              {/* The chance and the margin say the same thing twice; one segment. */}
+              <div className="scorebug__seg scorebug__seg--secondary">
+                <span className="scorebug__label">{matchup.winChance !== null ? 'Win chance' : 'Margin'}</span>
+                {matchup.winChance !== null && (
                   <span
                     className={`scorebug__value delta${matchup.winChance < 50 ? ' delta--down' : ''}`}
                     title="Your set lineup against theirs, each player with the spread typical for their position and projection; games already over count at their score."
                   >
                     {matchup.winChance < 1 ? '<1' : Math.round(matchup.winChance)}%
                   </span>
-                </div>
-              )}
-
-              <div className="scorebug__seg scorebug__seg--secondary">
-                <span className="scorebug__label">Margin</span>
+                )}
                 <span
-                  className={`scorebug__value delta${matchup.marginNow < 0 ? ' delta--down' : ''}`}
+                  className={
+                    matchup.winChance !== null
+                      ? 'scorebug__sub'
+                      : `scorebug__value delta${matchup.marginNow < 0 ? ' delta--down' : ''}`
+                  }
+                  title="Your projected total against theirs, as the lineups stand."
                 >
                   {matchup.marginNow > 0 ? '+' : ''}
                   {matchup.marginNow.toFixed(1)}
+                  {matchup.winChance !== null ? ' margin' : ''}
                 </span>
               </div>
             </>

@@ -27,13 +27,26 @@ const row = (id: string, actual: number | null, app: PlayerSnapshot | undefined,
   ...extra,
 });
 
-const week = (n: number, players: PlayerResult[], lineup: WeekResults['lineup']): WeekResults => ({
+const week = (
+  n: number,
+  players: PlayerResult[],
+  lineup: WeekResults['lineup'],
+  matchup?: WeekResults['matchup'],
+): WeekResults => ({
   leagueKey: 'k',
   week: n,
   recordedAt: 'now',
   snapshotted: players.some((p) => p.app),
   lineup,
+  ...(matchup !== undefined ? { matchup } : {}),
   players,
+});
+
+const lineup = (set: number, recommended: number, best: number): WeekResults['lineup'] => ({
+  set,
+  recommended,
+  recommendedFrom: 'app',
+  best,
 });
 
 describe('reviewResults', () => {
@@ -47,6 +60,38 @@ describe('reviewResults', () => {
       [2, 20],
     ]);
     expect(r.totals).toEqual({ set: 190, recommended: 192, best: 219 });
+  });
+
+  it('says who won each week, and which losses a better lineup would have turned around', () => {
+    const r = reviewResults([
+      // Won it.
+      week(1, [], lineup(120, 122, 130), { opponent: 'Them', myScore: 120, opponentScore: 110 }),
+      // Lost by less than the recommended lineup would have scored.
+      week(2, [], lineup(100, 116, 130), { opponent: 'Them', myScore: 100, opponentScore: 112 }),
+      // Lost; only a perfect lineup wins it.
+      week(3, [], lineup(100, 104, 130), { opponent: 'Them', myScore: 100, opponentScore: 120 }),
+      // Lost; nothing on the roster wins it.
+      week(4, [], lineup(100, 104, 130), { opponent: 'Them', myScore: 100, opponentScore: 140 }),
+    ]);
+    expect(r.weeks.map((w) => w.outcome?.outcome)).toEqual(['won', 'lost', 'lost', 'lost']);
+    expect(r.weeks[0]!.outcome).toMatchObject({ opponent: 'Them', opponentScore: 110 });
+    expect(r.weeks.map((w) => [w.outcome?.recommendedWins, w.outcome?.bestWins])).toEqual([
+      [true, true],
+      [true, true],
+      [false, true],
+      [false, false],
+    ]);
+    expect(r.record).toEqual({ won: 1, lost: 3, tied: 0, recommendedWins: 1, bestWins: 2 });
+  });
+
+  it('leaves out weeks with no recorded opponent, rather than guessing at one', () => {
+    const r = reviewResults([
+      week(1, [], lineup(120, 122, 130)),
+      week(2, [], lineup(100, 116, 130), null),
+      week(3, [], lineup(100, 104, 130), { opponent: 'Them', myScore: 100, opponentScore: 100 }),
+    ]);
+    expect(r.weeks.map((w) => w.outcome === undefined)).toEqual([true, true, false]);
+    expect(r.record).toEqual({ won: 0, lost: 0, tied: 1, recommendedWins: 1, bestWins: 1 });
   });
 
   it('grades each adjustment on its own, and ignores players priced after kickoff', () => {

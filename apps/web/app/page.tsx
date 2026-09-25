@@ -7,7 +7,7 @@ import { ExplainPanel } from './explain-panel';
 import { WebNewsPanel } from '@/components/web-news-panel';
 import { AdjustBar } from '@/components/adjust-bar';
 import { UpsidePanel } from '@/components/upside-panel';
-import { Flags, type Flag } from '@/components/flags';
+import { Flags, LockTag, type Flag } from '@/components/flags';
 import { formShort, gameShort, marketShort, matchupShort } from '@/lib/short-labels';
 import { openedRoleNote } from '@ds-nfl/core';
 import type { GameLine } from '@/lib/week';
@@ -68,7 +68,7 @@ function playerFlags(p: OptimizerPlayer, opening: string | undefined, game: Game
 }
 
 export default async function LineupPage() {
-  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, lastResult, upside, games } =
+  const { league, optimal, diff, current, currentPoints, isSample, error, matchup, allLocked, lockedCount, leagueKey, isFuture, news, odds, matchups, openings, form, lastResult, upside, games, scored } =
     await loadWeek();
   const ai = aiStatus();
   const everyone = [...optimal.starters.flatMap((s) => (s.player ? [s.player] : [])), ...optimal.bench];
@@ -139,7 +139,8 @@ export default async function LineupPage() {
           <span className="notice__tag">Locked</span>
           <span>
             {lockedCount} {lockedCount === 1 ? 'player has' : 'players have'} already played and
-            cannot be moved. They are held in their current slots below.
+            cannot be moved: they hold the slot they are in, and one on the bench stays there
+            however well they did.
           </span>
         </div>
       )}
@@ -279,7 +280,10 @@ export default async function LineupPage() {
                     )}
                     <div className="swap__row swap__in">
                       <span className="swap__mark swap__mark--in">IN</span>
-                      <span className="swap__who">{s.player.name}</span>
+                      <span className="swap__who">
+                        {s.player.name}
+                        {s.player.lockedToSlot && <LockTag />}
+                      </span>
                       <span className="swap__pts">
                         {s.player.position} · {pts(s.player.projectedPoints)} proj
                         <Flags
@@ -294,7 +298,10 @@ export default async function LineupPage() {
                   </div>
                 ) : (
                   <div>
-                    <div className="slot__name">{s.player.name}</div>
+                    <div className="slot__name">
+                      {s.player.name}
+                      {s.player.lockedToSlot && <LockTag />}
+                    </div>
                     <div className="slot__sub">
                       {s.player.position}
                       <Flags
@@ -323,6 +330,9 @@ export default async function LineupPage() {
                   ) : (
                     pts(s.player.projectedPoints)
                   )}
+                  {s.player && scored[s.player.gsisId] !== undefined && (
+                    <span className="slot__alt">{pts(scored[s.player.gsisId]!)} scored</span>
+                  )}
                 </div>
               </div>
             );
@@ -346,13 +356,19 @@ export default async function LineupPage() {
               style={{ ['--slot-hue' as string]: positionHue(b.position) }}
             >
               <div>
-                <div className="slot__name">{b.name}</div>
+                <div className="slot__name">
+                  {b.name}
+                  {b.lockedToSlot && <LockTag />}
+                </div>
                 <div className="slot__sub">
                   {b.position}
                   <Flags items={playerFlags(b, openings[b.gsisId] ? openedRoleNote(openings[b.gsisId]!, b.position) : undefined, games[b.gsisId])} />
                 </div>
               </div>
-              <div className="benchcard__pts">{b.available ? pts(b.projectedPoints) : '—'}</div>
+              <div className="benchcard__pts">
+                {b.available ? pts(b.projectedPoints) : '—'}
+                {scored[b.gsisId] !== undefined && <span className="slot__alt">{pts(scored[b.gsisId]!)} scored</span>}
+              </div>
             </div>
           ))}
         </div>

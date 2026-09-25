@@ -79,6 +79,14 @@ export interface PlayerResult {
   readonly webPick?: boolean;
 }
 
+/** The week's head-to-head, as the league recorded it. */
+export interface WeekMatchup {
+  readonly opponent: string;
+  /** Final scores, ESPN's own totals: the ones that decided the week. */
+  readonly myScore: number;
+  readonly opponentScore: number;
+}
+
 export interface WeekResults {
   readonly leagueKey: string;
   readonly week: number;
@@ -94,6 +102,13 @@ export interface WeekResults {
     /** The best lineup your roster could have fielded, in hindsight. */
     readonly best: number;
   } | null;
+  /**
+   * Who you played and what they scored. Null when the week had no opponent
+   * (a bye, or a league still being set up); absent in files written before
+   * results recorded the matchup, which is how those weeks are found and
+   * filled in.
+   */
+  readonly matchup?: WeekMatchup | null;
   readonly players: readonly PlayerResult[];
 }
 

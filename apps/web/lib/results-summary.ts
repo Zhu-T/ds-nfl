@@ -4,7 +4,7 @@
  */
 
 import { optimizeLineup, type OptimizerPlayer, type RosterSettings } from '@ds-nfl/core';
-import type { PlayerResult, ResultOwnerKind, RosterPlayer, WeekResults, WeekSnapshot } from '@ds-nfl/adapters';
+import type { PlayerResult, ResultOwnerKind, RosterPlayer, WeekMatchup, WeekResults, WeekSnapshot } from '@ds-nfl/adapters';
 
 export interface WeekInputs {
   readonly leagueKey: string;
@@ -18,6 +18,8 @@ export interface WeekInputs {
   /** Every news finding for the week, and whether it was in use. */
   readonly findings: readonly { readonly playerId: string; readonly status: string; readonly factor: number; readonly summary: string; readonly used: boolean }[];
   readonly pickedIds: ReadonlySet<string>;
+  /** The week's head-to-head: null when there was no opponent, absent when it could not be read. */
+  readonly matchup: WeekMatchup | null | undefined;
   readonly now?: string;
 }
 
@@ -64,6 +66,7 @@ export function summarizeWeek(input: WeekInputs): WeekResults {
     recordedAt: input.now ?? new Date().toISOString(),
     snapshotted: Object.keys(snap).length > 0,
     lineup: mine.length > 0 ? lineupTotals(mine, input.snapshot, input.settings) : null,
+    ...(input.matchup !== undefined ? { matchup: input.matchup } : {}),
     players: [
       ...input.rostered.map(({ player, ownerKind }) => row(player, ownerKind, player.currentSlot)),
       ...input.others.map((p) => row(p, p.pickup ?? 'free-agent')),

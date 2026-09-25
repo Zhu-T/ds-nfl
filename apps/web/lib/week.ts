@@ -61,6 +61,12 @@ export interface MatchupView {
    */
   readonly opponentBasis: 'set' | 'best';
   readonly myProjected: number;
+  /**
+   * Points on the board right now, both sides: the platform's own totals, zero
+   * before the first game of the week kicks off.
+   */
+  readonly myLive: number;
+  readonly opponentLive: number;
   /** Margin if the lineup is left as-is, and after applying the moves. */
   readonly marginNow: number;
   /**
@@ -95,6 +101,8 @@ export interface WeekView {
   /** True when every startable player's game has kicked off. */
   readonly allLocked: boolean;
   readonly lockedCount: number;
+  /** Points scored so far this week, by player id; only for players whose game has started. */
+  readonly scored: Record<string, number>;
   readonly matchup: MatchupView | null;
   readonly error: string | null;
   readonly league: {
@@ -286,6 +294,17 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
     const upside = { enabled: upsideOn, view: upsideOn ? await upsideView(plan) : null };
     const lockedCount = isFuture ? 0 : plan.roster.filter((p) => p.locked).length;
 
+    // What each player has actually scored so far. A player whose game has not
+    // started is absent rather than zero, so a row can tell the two apart.
+    const scored: Record<string, number> = {};
+    if (!isFuture) {
+      for (const p of plan.roster) {
+        if (p.actualPoints !== undefined && (p.locked || p.actualPoints !== 0)) {
+          scored[p.platformPlayerId] = Math.round(p.actualPoints * 10) / 10;
+        }
+      }
+    }
+
     const games: Record<string, GameLine> = {};
     for (const p of plan.roster) {
       const g = gameFor(plan.market, p.proTeam);
@@ -308,6 +327,7 @@ export const loadWeek = cache(async (key?: string | null, week?: number | null):
       isFuture,
       allLocked: lockedCount > 0 && lockedCount === plan.roster.length,
       lockedCount,
+      scored,
       matchup,
       error: null,
       league: {
@@ -377,6 +397,10 @@ async function matchupView(plan: LineupPlan, raw: Matchup, currentPoints: number
     winChance,
     opponentBasis,
     myProjected: currentPoints,
+    // A week that has not started has nothing on the board, whatever a stale
+    // total from the platform says.
+    myLive: plan.isFuture ? 0 : raw.myLive,
+    opponentLive: plan.isFuture ? 0 : raw.opponentLive,
     marginNow: round1(currentPoints - opponentProjected),
     marginAfter: round1(plan.optimal.projectedPoints - opponentProjected),
   };
@@ -436,11 +460,14 @@ function sampleView(error: string | null): WeekView {
     isFuture: false,
     allLocked: false,
     lockedCount: 0,
+    scored: {},
     matchup: {
       opponentName: s.matchup.opponent,
       opponentProjected: s.matchup.opponentProjected,
       opponentBasis: 'set',
       myProjected: s.currentPoints,
+      myLive: 0,
+      opponentLive: 0,
       marginNow: s.matchup.marginNow,
       winChance: null,
       marginAfter: s.matchup.marginAfter,

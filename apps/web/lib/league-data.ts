@@ -133,15 +133,24 @@ function unlocked(p: RosterPlayer, market: MarketContext | null = null): Optimiz
   return toOptimizer({ ...p, locked: false }, market);
 }
 
-/** Players priced for the week, unlocked: ESPN's projection, betting lines, the NFL matchup, then recent form. */
+/**
+ * Players priced for the week: ESPN's projection, betting lines, the NFL
+ * matchup, then recent form.
+ *
+ * Unlocked by default, for the questions that are about the weeks ahead. With
+ * `keepLocks`, this week's kickoff locks are kept, for the questions that are
+ * about the lineup as it actually stands right now.
+ */
 function priced(
   players: readonly RosterPlayer[],
   market: MarketContext | null,
   matchups: MatchupContext | null,
   formOn: boolean,
+  keepLocks = false,
 ): OptimizerPlayer[] {
+  const price = (p: RosterPlayer) => (keepLocks ? toOptimizer(p, market) : unlocked(p, market));
   return applyForm(
-    applyMatchups(players.map((p) => unlocked(p, market)), matchupInputs(matchups, players)),
+    applyMatchups(players.map(price), matchupInputs(matchups, players)),
     formInputs(players, formOn),
   );
 }
@@ -281,15 +290,25 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     const openings = openingsAmong([...[...(await reader.getAllRosters(ref, week)).values()].flat(), ...available]);
 
     // Web news covers the roster and the top pickups, so both are adjusted.
-    const mine = applyNewsFindings(priced(roster.players, market, matchups, formOn), findings);
-    const pool = applyNewsFindings(priced(available, market, matchups, formOn), findings);
+    // This week's ranking is against the lineup as it stands: a player whose
+    // game has kicked off can be neither replaced nor started, so pricing them
+    // as movable named benched, locked players as the starter a pickup would
+    // beat. Value beyond this week is the horizon's job, and it ignores locks.
+    const keepLocks = !isFuture;
+    const mine = applyNewsFindings(priced(roster.players, market, matchups, formOn, keepLocks), findings);
+    const pool = applyNewsFindings(priced(available, market, matchups, formOn, keepLocks), findings);
     // Players you have marked as protected are never named as the one to drop.
     const protectedSet = protectedIds(connKey);
     const ranked = rankWaiverCandidates(mine, pool, league.rosterSettings, protectedSet);
 
-    // Beyond this week: each candidate's value across the coming weeks, and who you would miss least.
+    // Beyond this week: each candidate's value across the coming weeks, and who
+    // you would miss least. Nothing is locked in a week that has not started.
+    const ahead = applyNewsFindings(priced(roster.players, market, matchups, formOn), findings);
+    const poolAhead = applyNewsFindings(priced(available, market, matchups, formOn), findings);
     const horizon = await horizonFor(reader, ref, league, week, [...roster.players, ...available]);
-    const horizonById = horizonValues(mine, pool, horizon, league.rosterSettings);
+    const horizonById = horizonValues(ahead, poolAhead, horizon, league.rosterSettings);
+    // The same candidate as the horizon prices them, with no lock on it.
+    const aheadById = new Map(poolAhead.map((p) => [p.gsisId, p]));
     const reach = (c: WaiverCandidate) => horizonById.get(c.player.gsisId)?.total ?? 0;
     const trendById: Record<string, Trend> = {};
     for (const p of available) {
@@ -313,13 +332,14 @@ export function loadWaivers(key?: string | null, requestedWeek?: number | null):
     );
     const dropById: Record<string, DropSuggestion> = {};
     for (const c of candidates.filter((x) => x.lineupGain > 0 || reach(x) > 0).slice(0, 30)) {
-      const [least] = dropCosts([...mine, c.player], horizon, league.rosterSettings, droppable);
+      const candidate = aheadById.get(c.player.gsisId) ?? c.player;
+      const [least] = dropCosts([...ahead, candidate], horizon, league.rosterSettings, droppable);
       if (least) dropById[c.player.gsisId] = least;
     }
 
     // What every droppable player would cost, so a confirmation can price whichever one is chosen.
     const dropCostById: Record<string, number> = {};
-    for (const cost of dropCosts(mine, horizon, league.rosterSettings, droppable)) {
+    for (const cost of dropCosts(ahead, horizon, league.rosterSettings, droppable)) {
       dropCostById[cost.playerId] = cost.total;
     }
 

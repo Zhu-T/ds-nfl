@@ -32,6 +32,16 @@ describe('rankWaiverCandidates', () => {
     expect(ranked[0]?.displaces).toBe('My WR');
   });
 
+  it('never names a player whose game has kicked off as the one displaced', () => {
+    // A locked player holds their slot, and one locked on the bench stays
+    // benched, so this week a pickup can take neither place from them.
+    const lockedBench: OptimizerPlayer = { ...p('Played Already', 'WR', 15), lockedToSlot: 'BENCH' };
+    const ranked = rankWaiverCandidates([...roster, lockedBench], [p('Better WR', 'WR', 17)], rs);
+
+    expect(ranked[0]?.displaces).toBe('My WR');
+    expect(ranked[0]?.lineupGain).toBe(5);
+  });
+
   it('suggests the cheapest player to drop', () => {
     const ranked = rankWaiverCandidates(roster, [p('Better WR', 'WR', 17)], rs);
     expect(ranked[0]?.dropCandidate).toBe('Bench WR');

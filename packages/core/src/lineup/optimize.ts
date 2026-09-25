@@ -31,7 +31,8 @@ export interface OptimizerPlayer {
    * Platforms lock a player once their game kicks off, so any move involving
    * them will be rejected. Recommending one is worse than useless: it is advice
    * the user cannot act on. A locked player holds their slot and is excluded
-   * from the matching entirely.
+   * from the matching entirely — including one locked on the bench, who cannot
+   * be started however well they have done.
    */
   readonly lockedToSlot?: LineupSlot;
   /** Set when web news changed this player's projection; see news/adjust.ts. */
@@ -86,6 +87,11 @@ export function optimizeLineup(
   const lockedIds = new Set<string>();
   const remainingSlotIndexes: number[] = [];
 
+  // Every locked player, wherever they are locked. One locked on the bench
+  // holds no starting slot, but their game has still kicked off, so they cannot
+  // be started either: the platform rejects the move.
+  const immovable = new Set(players.flatMap((p) => (p.lockedToSlot ? [p.gsisId] : [])));
+
   const lockedQueue = new Map<LineupSlot, OptimizerPlayer[]>();
   for (const p of players) {
     if (!p.lockedToSlot) continue;
@@ -111,7 +117,7 @@ export function optimizeLineup(
   // is worse than an empty slot, which scores zero, so they are benched too —
   // and excluding them here keeps every solver weight non-negative.
   const candidates = players.filter(
-    (p) => p.available && p.projectedPoints >= 0 && !lockedIds.has(p.gsisId),
+    (p) => p.available && p.projectedPoints >= 0 && !immovable.has(p.gsisId),
   );
 
   if (allSlots.length === 0) {

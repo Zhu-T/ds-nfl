@@ -90,13 +90,37 @@ export async function recordCompletedWeeks(reader: EspnReader, ref: LeagueRef, l
   recording.add(key);
   try {
     for (let week = 1; week < league.currentWeek; week++) {
-      if (readWeekResults(key, week)) continue;
-      writeWeekResults(await weekResults(reader, ref, league, key, week));
+      const existing = readWeekResults(key, week);
+      if (!existing) {
+        writeWeekResults(await weekResults(reader, ref, league, key, week));
+        continue;
+      }
+      // Recorded before the head-to-head was kept: fill it in rather than
+      // re-reading the whole week, which would cost a dozen requests.
+      if (existing.matchup === undefined) {
+        const found = await finalScore(reader, ref, week);
+        if (found !== undefined) writeWeekResults({ ...existing, matchup: found });
+      }
     }
   } catch {
     // Tried again on the next page load.
   } finally {
     recording.delete(key);
+  }
+}
+
+/**
+ * The week's head-to-head, as ESPN's own totals recorded it: the scores that
+ * decided the week, whatever the app made of the lineups. Null when there was
+ * no opponent, or when ESPN could not be asked.
+ */
+async function finalScore(reader: EspnReader, ref: LeagueRef, week: number) {
+  try {
+    const m = await reader.getMatchup(ref, week);
+    return m ? { opponent: m.opponentTeamName, myScore: m.myLive, opponentScore: m.opponentLive } : null;
+  } catch {
+    // Left absent, so the next page load asks again.
+    return undefined;
   }
 }
 
@@ -112,6 +136,7 @@ async function weekResults(reader: EspnReader, ref: LeagueRef, league: LeagueInf
   const others = otherIds.length > 0 ? await reader.getPlayersByIds(ref, week, otherIds) : [];
   const report = readNewsReport(key, week);
   const picks = readWebPicks(key, week);
+  const matchup = await finalScore(reader, ref, week);
   return summarizeWeek({
     leagueKey: key,
     week,
@@ -127,6 +152,7 @@ async function weekResults(reader: EspnReader, ref: LeagueRef, league: LeagueInf
       used: !report!.disabled.includes(f.playerId),
     })),
     pickedIds: new Set((picks?.picks ?? []).flatMap((p) => (p.playerId ? [p.playerId] : []))),
+    matchup,
   });
 }
 

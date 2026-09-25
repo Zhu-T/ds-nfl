@@ -252,6 +252,19 @@ describe('optimizeLineup', () => {
     expect(solution.projectedPoints).toBe(22);
   });
 
+  it('leaves a locked bench player on the bench, however well they have done', () => {
+    // Their game has kicked off, so the platform will not take them into the
+    // lineup either. Recommending it is advice that cannot be executed.
+    const rs = settings({ RB: 1 });
+    const lockedBench: OptimizerPlayer = { ...player('Played Already', 'RB', 22), lockedToSlot: 'BENCH' };
+    const starter = player('Still To Play', 'RB', 9);
+
+    const solution = optimizeLineup([lockedBench, starter], rs);
+    expect(solution.starters[0]?.player?.name).toBe('Still To Play');
+    expect(solution.bench.map((b) => b.name)).toContain('Played Already');
+    expect(solution.projectedPoints).toBe(9);
+  });
+
   it('reports nothing to change when every slot is locked', () => {
     const rs = settings({ RB: 1, WR: 1 });
     const players: OptimizerPlayer[] = [

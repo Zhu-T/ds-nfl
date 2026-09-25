@@ -10,6 +10,17 @@
 
 import type { PlayerResult, PlayerSnapshot, WeekResults } from '@ds-nfl/adapters';
 
+/** How a week ended, and whether a better lineup would have ended it differently. */
+export interface WeekOutcome {
+  readonly opponent: string;
+  readonly myScore: number;
+  readonly opponentScore: number;
+  readonly outcome: 'won' | 'lost' | 'tied';
+  /** For a week you did not win: whether these would have beaten that score. */
+  readonly recommendedWins: boolean;
+  readonly bestWins: boolean;
+}
+
 export interface WeekReview {
   readonly week: number;
   /** False for weeks from before recording began: ESPN's projections only. */
@@ -20,6 +31,8 @@ export interface WeekReview {
   readonly best: number;
   /** What the bench outscored the lineup by: best − set. */
   readonly leftOnBench: number;
+  /** Absent for weeks with no opponent, and for weeks recorded before this was kept. */
+  readonly outcome?: WeekOutcome;
 }
 
 export interface AdjustmentVerdict {
@@ -50,6 +63,18 @@ export interface PickReview {
 export interface Accuracy {
   readonly weeks: readonly WeekReview[];
   readonly totals: { readonly set: number; readonly recommended: number; readonly best: number };
+  /**
+   * Your record over the graded weeks, and the losses a better lineup would
+   * have turned around. Weeks with no recorded opponent are left out of it.
+   */
+  readonly record: {
+    readonly won: number;
+    readonly lost: number;
+    readonly tied: number;
+    /** Losses the recommended lineup would have won, and the best possible one. */
+    readonly recommendedWins: number;
+    readonly bestWins: number;
+  };
   /** Every player the app priced before kickoff: ESPN's error against the app's. */
   readonly projections: { readonly players: number; readonly espn: number; readonly app: number };
   readonly adjustments: readonly AdjustmentVerdict[];
@@ -98,6 +123,28 @@ const LABELS: Record<AdjustmentVerdict['key'], string> = {
   form: 'Recent form',
 };
 
+/**
+ * A week's result, and the counterfactuals.
+ *
+ * The verdict uses the league's own totals, since those are what counted. The
+ * counterfactuals compare a lineup's actual points against the opponent's
+ * score: changing your lineup would not have changed theirs.
+ */
+function outcomeOf(
+  matchup: NonNullable<WeekResults['matchup']>,
+  lineup: NonNullable<WeekResults['lineup']>,
+): WeekOutcome {
+  return {
+    opponent: matchup.opponent,
+    myScore: matchup.myScore,
+    opponentScore: matchup.opponentScore,
+    outcome:
+      matchup.myScore > matchup.opponentScore ? 'won' : matchup.myScore < matchup.opponentScore ? 'lost' : 'tied',
+    recommendedWins: lineup.recommended > matchup.opponentScore,
+    bestWins: lineup.best > matchup.opponentScore,
+  };
+}
+
 export function reviewResults(results: readonly WeekResults[]): Accuracy {
   const weeks = [...results].sort((a, b) => a.week - b.week);
   const rows = scored(weeks);
@@ -127,22 +174,34 @@ export function reviewResults(results: readonly WeekResults[]): Accuracy {
   );
   const ceilings = rows.filter((r) => r.app.ceiling !== undefined);
 
+  const reviewed = weeks.flatMap((w) =>
+    w.lineup
+      ? [
+          {
+            week: w.week,
+            snapshotted: w.snapshotted,
+            set: w.lineup.set,
+            recommended: w.lineup.recommended,
+            recommendedFrom: w.lineup.recommendedFrom,
+            best: w.lineup.best,
+            leftOnBench: round1(w.lineup.best - w.lineup.set),
+            ...(w.matchup ? { outcome: outcomeOf(w.matchup, w.lineup) } : {}),
+          },
+        ]
+      : [],
+  );
+  const decided = reviewed.flatMap((w) => (w.outcome ? [w.outcome] : []));
+  const notWon = decided.filter((o) => o.outcome !== 'won');
+
   return {
-    weeks: weeks.flatMap((w) =>
-      w.lineup
-        ? [
-            {
-              week: w.week,
-              snapshotted: w.snapshotted,
-              set: w.lineup.set,
-              recommended: w.lineup.recommended,
-              recommendedFrom: w.lineup.recommendedFrom,
-              best: w.lineup.best,
-              leftOnBench: round1(w.lineup.best - w.lineup.set),
-            },
-          ]
-        : [],
-    ),
+    weeks: reviewed,
+    record: {
+      won: decided.filter((o) => o.outcome === 'won').length,
+      lost: decided.filter((o) => o.outcome === 'lost').length,
+      tied: decided.filter((o) => o.outcome === 'tied').length,
+      recommendedWins: notWon.filter((o) => o.recommendedWins).length,
+      bestWins: notWon.filter((o) => o.bestWins).length,
+    },
     totals: {
       set: round1(weeks.reduce((s, w) => s + (w.lineup?.set ?? 0), 0)),
       recommended: round1(weeks.reduce((s, w) => s + (w.lineup?.recommended ?? 0), 0)),

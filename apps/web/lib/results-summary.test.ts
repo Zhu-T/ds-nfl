@@ -31,6 +31,7 @@ const base: WeekInputs = {
   snapshot: null,
   findings: [{ playerId: 'C', status: 'questionable', factor: 0.8, summary: 'Limited.', used: true }],
   pickedIds: new Set(['F']),
+  matchup: { opponent: 'Them', myScore: 30, opponentScore: 28 },
   now: 'now',
 };
 
@@ -39,6 +40,13 @@ describe('summarizeWeek', () => {
     const r = summarizeWeek(base);
     expect(r.lineup).toEqual({ set: 30, recommended: 30, recommendedFrom: 'espn', best: 35 });
     expect(r.snapshotted).toBe(false);
+  });
+
+  it('keeps the head-to-head, and leaves it absent when it could not be read', () => {
+    expect(summarizeWeek(base).matchup).toEqual({ opponent: 'Them', myScore: 30, opponentScore: 28 });
+    // Null is a week with no opponent; absent means ask ESPN again next time.
+    expect(summarizeWeek({ ...base, matchup: null }).matchup).toBeNull();
+    expect('matchup' in summarizeWeek({ ...base, matchup: undefined })).toBe(false);
   });
 
   it("uses the app's recommended slots when it recorded them before kickoff", () => {

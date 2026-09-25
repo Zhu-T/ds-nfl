@@ -1,5 +1,5 @@
 import { LoadState } from '@/components/loaded';
-import { ENOUGH_PLAYERS, reviewResults, type AdjustmentVerdict } from '@/lib/accuracy';
+import { ENOUGH_PLAYERS, reviewResults, type AdjustmentVerdict, type WeekOutcome } from '@/lib/accuracy';
 import { loadReview } from '@/lib/league-data';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,27 @@ function verdict(a: AdjustmentVerdict): string {
   return a.better > 0
     ? `${size} points closer per player over ${a.players} player-weeks`
     : `${size} points further off per player over ${a.players} player-weeks — worth switching off`;
+}
+
+/** "Won 122.3–118.6 vs Dark Knights". The scores are the league's own totals. */
+function scoreline(o: WeekOutcome): string {
+  const verb = o.outcome === 'won' ? 'Won' : o.outcome === 'lost' ? 'Lost' : 'Tied';
+  const against = o.outcome === 'won' ? 'vs' : o.outcome === 'lost' ? 'to' : 'with';
+  return `${verb} ${pts(o.myScore)}–${pts(o.opponentScore)} ${against} ${o.opponent}`;
+}
+
+/** What a better lineup would have done to a week you did not win. */
+function wouldHaveWon(o: WeekOutcome): string {
+  if (o.outcome === 'won') return '';
+  if (o.recommendedWins) return ` — the recommended lineup would have ${o.outcome === 'lost' ? 'won it' : 'won outright'}`;
+  if (o.bestWins) return ' — only a perfect lineup would have won it';
+  return ` — nothing on your roster beats ${pts(o.opponentScore)}`;
+}
+
+/** Green for a week won, red for one lost, plain for one with no opponent recorded. */
+function hueFor(o: WeekOutcome | undefined): string {
+  if (!o) return 'var(--border-strong)';
+  return o.outcome === 'won' ? 'var(--gain)' : o.outcome === 'lost' ? 'var(--loss)' : 'var(--border-strong)';
 }
 
 export default async function ReviewPage() {
@@ -49,13 +70,16 @@ export default async function ReviewPage() {
 
                 <div className="slots">
                   {review.weeks.map((w) => (
-                    <div key={w.week} className="slot" style={{ ['--slot-hue' as string]: 'var(--border-strong)' }}>
+                    <div key={w.week} className="slot" style={{ ['--slot-hue' as string]: hueFor(w.outcome) }}>
                       <div className="slot__tag">W{w.week}</div>
                       <div>
-                        <div className="slot__name">You scored {pts(w.set)}</div>
+                        <div className="slot__name">
+                          {w.outcome ? scoreline(w.outcome) : `You scored ${pts(w.set)}`}
+                        </div>
                         <div className="slot__sub">
                           {w.recommendedFrom === 'app' ? 'recommended' : "ESPN's best projected"} {pts(w.recommended)} · best
                           possible {pts(w.best)}
+                          {w.outcome ? wouldHaveWon(w.outcome) : ''}
                           {w.snapshotted ? '' : ' · no pre-game record, ESPN projections only'}
                         </div>
                       </div>
@@ -68,6 +92,20 @@ export default async function ReviewPage() {
                 </div>
 
                 <p className="adjust-note">
+                  {review.record.won + review.record.lost + review.record.tied > 0 && (
+                    <>
+                      Record {review.record.won}&ndash;{review.record.lost}
+                      {review.record.tied > 0 ? `–${review.record.tied}` : ''}
+                      {review.record.lost > 0
+                        ? review.record.recommendedWins > 0
+                          ? `, and the recommended lineup would have won ${review.record.recommendedWins} more`
+                          : review.record.bestWins > 0
+                            ? `, and only a perfect lineup would have won ${review.record.bestWins} more`
+                            : ', and no lineup you could have set would have won more'
+                        : ''}
+                      {'. '}
+                    </>
+                  )}
                   Season so far: you {pts(review.totals.set)} · recommended {pts(review.totals.recommended)} · best possible{' '}
                   {pts(review.totals.best)}
                 </p>

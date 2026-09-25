@@ -407,10 +407,10 @@ export class EspnReader implements LeagueReader {
       myTeamName: names.get(String(me.teamId)) ?? 'My team',
       opponentTeamName: names.get(String(them.teamId)) ?? 'Opponent',
       opponentTeamId: String(them.teamId),
-      myProjected: round1(me.totalProjectedPoints),
-      opponentProjected: round1(them.totalProjectedPoints),
-      myLive: round1(me.totalPoints),
-      opponentLive: round1(them.totalPoints),
+      myProjected: round1(projectedOf(me)),
+      opponentProjected: round1(projectedOf(them)),
+      myLive: round1(scoredOf(me)),
+      opponentLive: round1(scoredOf(them)),
     };
   }
 
@@ -597,6 +597,28 @@ function projectionDetail(
 
 function round1(n: unknown): number {
   return typeof n === 'number' ? Math.round(n * 10) / 10 : 0;
+}
+
+const num = (n: unknown): number => (typeof n === 'number' ? n : 0);
+
+/**
+ * A side's points, live or final.
+ *
+ * While the week's games are being played ESPN keeps the running total in
+ * `totalPointsLive` and leaves `totalPoints` at zero; once the week is over the
+ * final lands in `totalPoints` and the live field goes away. Reading only one
+ * of them showed an opponent on zero all Sunday.
+ */
+function scoredOf(side: Record<string, any>): number {
+  return Math.max(num(side.totalPointsLive), num(side.totalPoints));
+}
+
+/**
+ * A side's projected total: while games are on, ESPN's live projection, which
+ * counts what has already been scored. Before kickoff the two are the same.
+ */
+function projectedOf(side: Record<string, any>): number {
+  return num(side.totalProjectedPointsLive) || num(side.totalProjectedPoints);
 }
 
 function teamName(t: Record<string, any>): string {
