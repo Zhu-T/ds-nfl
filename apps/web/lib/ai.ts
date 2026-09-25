@@ -16,9 +16,16 @@ import {
   type LlmProvider,
 } from '@ds-nfl/llm';
 
-import { DEFAULT_OLLAMA_MODEL, ollamaModelFor, type AiTask } from './ai-models';
+import {
+  DEFAULT_OLLAMA_MODEL,
+  MAX_CONTEXT_TOKENS,
+  contextTokensFor,
+  contextWindowFor,
+  ollamaModelFor,
+  type AiTask,
+} from './ai-models';
 
-export { DEFAULT_OLLAMA_MODEL, type AiTask };
+export { DEFAULT_OLLAMA_MODEL, MAX_CONTEXT_TOKENS, contextTokensFor, type AiTask };
 
 export interface AiStatus {
   readonly provider: 'off' | 'claude' | 'ollama';
@@ -37,6 +44,13 @@ export interface AiStatus {
   readonly chatLabel: string | null;
   /** Whether an Ollama web search key is stored. Never the key itself. */
   readonly ollamaSearchKeySet: boolean;
+  /** The largest context window asked of a local model, in tokens. */
+  readonly ollamaContextTokens: number;
+}
+
+/** How much the current provider can read at once, for deciding what fits. */
+export function contextWindow(): number {
+  return contextWindowFor(aiSettings());
 }
 
 export function aiSettings(): AiSettings {
@@ -73,6 +87,7 @@ export function aiStatus(): AiStatus {
           ? `${ollamaModelFor(s, 'chat')} (local)`
           : null,
     ollamaSearchKeySet: Boolean(s.ollamaApiKey),
+    ollamaContextTokens: contextTokensFor(s),
   };
 }
 
@@ -84,7 +99,12 @@ export function currentProvider(task: AiTask = 'writing'): LlmProvider | null {
   const s = aiSettings();
   if (s.provider === 'claude') return createClaudeProvider(s.anthropicApiKey);
   if (s.provider === 'ollama') {
-    return new OllamaProvider(ollamaModelFor(s, task), s.ollamaUrl ?? DEFAULT_OLLAMA_URL);
+    return new OllamaProvider(
+      ollamaModelFor(s, task),
+      s.ollamaUrl ?? DEFAULT_OLLAMA_URL,
+      undefined,
+      contextTokensFor(s),
+    );
   }
   return null;
 }

@@ -53,6 +53,12 @@ export interface AiSettings {
   readonly ollamaChatModel?: string;
   /** Key for Ollama's web search API (a free ollama.com account). Optional; adds a news source. */
   readonly ollamaApiKey?: string;
+  /**
+   * The largest context window to ask a local model for, in tokens. A bigger one
+   * fits more of the brief and a longer conversation, and holds more VRAM while
+   * the model runs. Absent means the default; see packages/llm/src/window.ts.
+   */
+  readonly ollamaContextTokens?: number;
 }
 
 export interface Store {

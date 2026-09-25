@@ -18,7 +18,7 @@ import {
   waiverPicksResearchRequest,
   type ParsedPicks,
 } from '@ds-nfl/llm';
-import { aiSettings, currentProvider } from '@/lib/ai';
+import { aiSettings, contextWindow, currentProvider } from '@/lib/ai';
 import { planLineup } from '@/lib/week';
 
 export interface PicksResult {
@@ -80,7 +80,12 @@ export async function checkWaiverPicks(key: string, week: number): Promise<Picks
       if (gathered.items.length === 0) {
         parsed = { picks: [], rejected: [] };
       } else {
-        const { request, sources } = waiverPicksDigestRequest({ week: plan.week, today, items: gathered.items });
+        const { request, sources } = waiverPicksDigestRequest({
+          week: plan.week,
+          today,
+          items: gathered.items,
+          maxContextTokens: contextWindow(),
+        });
         const out = await provider.complete(request);
         parsed = parseWaiverPicks(out.text, sources, { numbered: true, notBefore: Date.now() - 7 * 86_400_000 });
         model = out.model;

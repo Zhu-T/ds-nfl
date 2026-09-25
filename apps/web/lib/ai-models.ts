@@ -13,6 +13,7 @@
  */
 
 import type { AiSettings } from '@ds-nfl/adapters';
+import { DEFAULT_MAX_WINDOW_TOKENS, MIN_WINDOW_TOKENS } from '@ds-nfl/llm';
 
 export type AiTask = 'writing' | 'judgment' | 'chat';
 
@@ -29,4 +30,25 @@ export function ollamaModelFor(settings: AiSettings, task: AiTask): string {
   if (task === 'judgment') return settings.ollamaJudgmentModel ?? writing;
   if (task === 'chat') return settings.ollamaChatModel ?? writing;
   return writing;
+}
+
+/** More than this is beyond what these models are trained for, and would only waste VRAM. */
+export const MAX_CONTEXT_TOKENS = 131_072;
+
+/**
+ * Claude's window, which no brief this app builds comes close to filling, so
+ * nothing is ever trimmed for it.
+ */
+const CLAUDE_CONTEXT_TOKENS = 180_000;
+
+/** The window cap for local models: the saved one, held to what is usable. */
+export function contextTokensFor(settings: AiSettings): number {
+  const saved = settings.ollamaContextTokens;
+  if (!saved || !Number.isFinite(saved)) return DEFAULT_MAX_WINDOW_TOKENS;
+  return Math.min(MAX_CONTEXT_TOKENS, Math.max(MIN_WINDOW_TOKENS, Math.round(saved)));
+}
+
+/** How much a provider can read at once, for deciding what fits. */
+export function contextWindowFor(settings: AiSettings): number {
+  return settings.provider === 'ollama' ? contextTokensFor(settings) : CLAUDE_CONTEXT_TOKENS;
 }

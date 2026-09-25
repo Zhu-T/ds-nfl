@@ -12,7 +12,7 @@ import {
   type ResearchPlayer,
 } from '@ds-nfl/llm';
 import type { OptimizerPlayer } from '@ds-nfl/core';
-import { aiSettings, currentProvider } from '@/lib/ai';
+import { aiSettings, contextWindow, currentProvider } from '@/lib/ai';
 import { planLineup } from '@/lib/week';
 import { loadWaivers } from '@/lib/league-data';
 
@@ -134,6 +134,7 @@ export async function checkWebNews(key: string, week: number): Promise<NewsCheck
           today,
           players,
           items: news.items,
+          maxContextTokens: contextWindow(),
         });
         const out = await provider.complete(request);
         parsed = parseNewsFindings(out.text, players, sources, { numbered: true, notBefore: Date.now() - WINDOW_MS });

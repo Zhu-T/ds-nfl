@@ -19,6 +19,7 @@
 
 import { FACTOR_RANGE, boundFactor, type NewsFinding, type NewsStatus } from '@ds-nfl/core';
 import { LlmError, type LlmRequest, type ResearchRequest, type ResearchSource } from './types.js';
+import { windowForParts } from './window.js';
 
 export interface ResearchPlayer {
   readonly id: string;
@@ -121,7 +122,10 @@ export function newsDigestRequest(input: {
   readonly today: string;
   readonly players: readonly ResearchPlayer[];
   readonly items: readonly DigestItem[];
+  /** The largest window to ask a local model for; see window.ts. */
+  readonly maxContextTokens?: number;
 }): { request: LlmRequest; sources: ResearchSource[] } {
+  const maxContextTokens = input.maxContextTokens;
   const sources: ResearchSource[] = [];
   const blocks: string[] = [];
 
@@ -147,10 +151,8 @@ ${reportRules(input.week, 'the numbers of the items the finding is based on, tak
 
   const user = [`League: ${input.leagueName}. News gathered for week ${input.week}, by player:`, '', blocks.join('\n\n')].join('\n');
 
-  // Ollama cuts long prompts off silently unless asked for a bigger window:
-  // about three characters per token, plus room for the answer.
-  const estimate = Math.ceil((system.length + user.length) / 3) + 2_000;
-  const contextTokens = Math.min(32_768, Math.max(8_192, Math.ceil(estimate / 4_096) * 4_096));
+  // The window a local model needs for this prompt; see window.ts.
+  const contextTokens = windowForParts([system, user], { ...(maxContextTokens !== undefined ? { max: maxContextTokens } : {}) });
 
   return { request: { system, user, contextTokens, timeoutMs: 600_000 }, sources };
 }

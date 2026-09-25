@@ -6,6 +6,15 @@ import { saveAiSettings, type ConnectResult } from './actions';
 
 type Provider = 'off' | 'claude' | 'ollama';
 
+/** Windows worth offering: enough to matter, few enough to choose between. */
+const CONTEXT_SIZES: readonly [number, string][] = [
+  [8_192, '8k — smallest, trims the most'],
+  [16_384, '16k'],
+  [32_768, '32k — recommended'],
+  [65_536, '64k'],
+  [131_072, '128k — largest, most memory'],
+];
+
 const OPTIONS: readonly { value: Provider; title: string; hint: string }[] = [
   {
     value: 'off',
@@ -31,6 +40,7 @@ export function AiForm({
   ollamaModel,
   ollamaJudgmentModel,
   ollamaChatModel,
+  ollamaContextTokens,
   ollamaSearchKeySet,
   installedModels,
   ollamaReachable,
@@ -43,6 +53,8 @@ export function AiForm({
   ollamaJudgmentModel: string | null;
   /** Null when the chat uses the same model. */
   ollamaChatModel: string | null;
+  /** The largest context window asked of a local model, in tokens. */
+  ollamaContextTokens: number;
   ollamaSearchKeySet: boolean;
   installedModels: readonly string[];
   ollamaReachable: boolean;
@@ -186,6 +198,24 @@ export function AiForm({
             <span className="field__hint">
               A model that reasons, such as deepseek-r1:14b, can talk through pickups and trades, and shows its
               reasoning under each answer. It is slower than one fine-tuned to answer straight from the facts.
+            </span>
+          </label>
+
+          <label className="field">
+            <span className="field__label">Context window</span>
+            <select className="field__input" name="ollamaContextTokens" defaultValue={String(ollamaContextTokens)}>
+              {CONTEXT_SIZES.map(([tokens, title]) => (
+                <option key={tokens} value={tokens}>
+                  {title}
+                </option>
+              ))}
+            </select>
+            <span className="field__hint">
+              How much the model can read at once: the week&apos;s facts, your roster, the available
+              players, and the conversation so far. The app asks for only what a request needs, up to
+              this much; anything that still will not fit is left out, and the answer says what. A
+              larger window holds more video memory while the model runs, which matters on a card you
+              also play games on.
             </span>
           </label>
 

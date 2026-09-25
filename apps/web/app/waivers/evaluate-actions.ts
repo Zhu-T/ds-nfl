@@ -9,7 +9,7 @@ import {
   type PlayerEvaluation,
   type PlayerWebNews,
 } from '@/lib/league-data';
-import { aiSettings, currentProvider } from '@/lib/ai';
+import { aiSettings, contextWindow, currentProvider } from '@/lib/ai';
 
 export type EvaluateResult = { readonly ok: true; readonly result: EvaluationResult } | { readonly ok: false; readonly message: string };
 
@@ -75,7 +75,14 @@ export async function playerNewsReadAction(key: string, week: number, id: string
 
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const { request, sources } = newsDigestRequest({ leagueName, week: inputs.data.week, today, players: [player], items });
+    const { request, sources } = newsDigestRequest({
+      leagueName,
+      week: inputs.data.week,
+      today,
+      players: [player],
+      items,
+      maxContextTokens: contextWindow(),
+    });
     const out = await provider.complete(request);
     const parsed = parseNewsFindings(out.text, [player], sources, { numbered: true, notBefore: Date.now() - 7 * 86_400_000 });
     const finding = parsed.findings[0] ?? null;

@@ -9,6 +9,8 @@ import {
 } from '@ds-nfl/adapters';
 import {
   checkNumbers,
+  droppedNote,
+  fitToWindow,
   leagueChatRequest,
   LlmError,
   lookUpPlayers,
@@ -16,7 +18,7 @@ import {
   withLookup,
   type LlmText,
 } from '@ds-nfl/llm';
-import { currentProvider } from '@/lib/ai';
+import { contextWindow, currentProvider } from '@/lib/ai';
 import { buildLeagueContext } from '@/lib/league-context';
 import { whatIfsFor } from '@/lib/what-if';
 
@@ -89,6 +91,21 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
   const block = [looked, worked.block].filter(Boolean).join('\n\n');
   const covered = [...new Set([...found.map((p) => p.name), ...worked.names])];
 
+  // As much of the brief and the conversation as this model can read at once.
+  // What is left out is said in the answer rather than silently missing.
+  const window = contextWindow();
+  const fit = fitToWindow({
+    sections: ctx.view.sections,
+    lead: `Team: ${ctx.view.teamName}.`,
+    history,
+    question,
+    fixed: block,
+    max: window,
+  });
+  const note = droppedNote(fit.dropped);
+
+  // The guard allows every number in the whole brief, including any part that
+  // did not fit: a number the model cannot see is not one it can invent.
   const allowed = [
     ctx.view.text,
     ...past.filter((m) => m.role === 'user').flatMap((m) => [m.content, m.lookup ?? '']),
@@ -113,7 +130,9 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
 
     let out: LlmText;
     try {
-      out = await provider.complete(leagueChatRequest(ctx.view.teamName, ctx.view.text, history, withLookup(ask, block)));
+      out = await provider.complete(
+        leagueChatRequest(ctx.view.teamName, fit.text, fit.history, withLookup(ask, block), window),
+      );
     } catch (error) {
       return { messages: prev.messages, error: messageOf(error) };
     }
@@ -125,7 +144,9 @@ export async function leagueChat(prev: ChatState, form: FormData): Promise<ChatS
     if (guard.ok) {
       const reply: ChatMessage = {
         role: 'assistant',
-        content: text,
+        content: note ? `${text}
+
+${note}` : text,
         at: new Date().toISOString(),
         author,
         ...(out.reasoning ? { reasoning: out.reasoning.slice(0, 12_000) } : {}),

@@ -10,6 +10,7 @@
 
 import { LlmError, type LlmRequest, type ResearchRequest, type ResearchSource } from './types.js';
 import { isStale, lastJsonBlock, normalizeUrl, weekBefore } from './research.js';
+import { windowForParts } from './window.js';
 
 /** An article or headline the app gathered for a local model to read. */
 export interface WaiverArticle {
@@ -71,7 +72,10 @@ export function waiverPicksDigestRequest(input: {
   readonly week: number;
   readonly today: string;
   readonly items: readonly WaiverArticle[];
+  /** The largest window to ask a local model for; see window.ts. */
+  readonly maxContextTokens?: number;
 }): { request: LlmRequest; sources: ResearchSource[] } {
+  const maxContextTokens = input.maxContextTokens;
   const sources: ResearchSource[] = input.items.map((i) => ({ url: i.url, title: `${i.source}: ${i.title}`, published: i.published }));
   const lines = input.items.map(
     (i, n) => `[${n + 1}] ${i.published}, ${i.source}: ${i.title}${i.text ? `\n${i.text}` : ''}`,
@@ -84,8 +88,8 @@ Each item below is numbered. Use only these items; a headline that names players
 ${rules(input.week, 'the numbers of the items that recommend the player', '[2, 5]')}`;
 
   const user = [`Waiver wire items gathered for week ${input.week}:`, '', lines.join('\n\n')].join('\n');
-  const estimate = Math.ceil((system.length + user.length) / 3) + 2_000;
-  const contextTokens = Math.min(32_768, Math.max(8_192, Math.ceil(estimate / 4_096) * 4_096));
+  // The window a local model needs for this prompt; see window.ts.
+  const contextTokens = windowForParts([system, user], { ...(maxContextTokens !== undefined ? { max: maxContextTokens } : {}) });
   return { request: { system, user, contextTokens, timeoutMs: 600_000 }, sources };
 }
 

@@ -303,8 +303,8 @@ shown. When it changes a projection, a line under the verdict says so and links 
 - **Local model (Ollama), no API key.** The app gathers the last week of news itself: ESPN's
   player updates, and headlines from Google News that name the player. Only headlines are
   taken; articles are not fetched. The model reads that material in one request and cites
-  items by number. Ollama's context window is set to fit the prompt, since it otherwise
-  cuts long prompts off without an error.
+  items by number. Ollama's context window is set to fit the prompt, up to the size set
+  under Settings, since it otherwise refuses or cuts long prompts off.
 - **Optional: Ollama web search.** Adding a key from a free ollama.com account (under the
   Ollama choice on the Connect page) adds one web search per player. That gives page text,
   not just headlines. Only player names are searched, and the local model still does the
@@ -502,8 +502,12 @@ One page per connected league (**League AI** in the sidebar) with two parts:
   rows looked up for any question so far, or your own messages. One that uses any other
   number is retried once and otherwise withheld, and withheld answers are kept out of later
   turns. With a local model the context window is sized to fit the brief and the
-  conversation (8,192 to 32,768 tokens), since Ollama otherwise cuts long prompts off
-  without an error.
+  conversation, up to the **Context window** set under Settings (8k to 128k, 32k by
+  default), since Ollama otherwise refuses or cuts long prompts off. When even that is
+  not enough, the oldest turns go first, then the available-player list, the trade ideas,
+  the recent news, and the waiver list — never the week's facts, your roster, your
+  question, or the rows looked up with it — and the answer ends with a line saying what
+  was left out. A larger window holds more video memory while the model runs.
 
 The number check cannot catch claims without numbers, and local models in particular pad
 answers with general fantasy advice. The brief on the same page is the reference.

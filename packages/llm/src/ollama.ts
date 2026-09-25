@@ -7,6 +7,7 @@
  */
 
 import { LlmError, type LlmProvider, type LlmRequest, type LlmText } from './types.js';
+import { DEFAULT_MAX_WINDOW_TOKENS, MIN_WINDOW_TOKENS, windowForTokens } from './window.js';
 
 export const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 
@@ -18,7 +19,19 @@ const DEFAULT_TIMEOUT_MS = 180_000;
  * without an error. The League AI brief plus a conversation needs more than
  * the default, so every request asks for at least this much.
  */
-const DEFAULT_CONTEXT_TOKENS = 8_192;
+const DEFAULT_CONTEXT_TOKENS = MIN_WINDOW_TOKENS;
+
+/**
+ * Ollama refuses a prompt larger than the window asked for, and says how large
+ * the prompt actually was: "request (16619 tokens) exceeds the available
+ * context size (16384 tokens)". That is enough to ask again, correctly.
+ */
+const TOO_LONG = /request \((\d+) tokens?\) exceeds the available context size \((\d+) tokens?\)/i;
+
+export function tooLongFor(detail: string): { needed: number; available: number } | null {
+  const hit = TOO_LONG.exec(detail);
+  return hit ? { needed: Number(hit[1]), available: Number(hit[2]) } : null;
+}
 
 interface OllamaChatResponse {
   /** Newer Ollama returns a reasoning model's thinking separately; older builds inline it in `content`. */
@@ -37,6 +50,8 @@ export class OllamaProvider implements LlmProvider {
     private readonly baseUrl: string = DEFAULT_OLLAMA_URL,
     /** Injected so tests can run without a local server. */
     private readonly fetchImpl: typeof fetch = fetch,
+    /** The largest window to ask for; a bigger one holds more VRAM while the model runs. */
+    private readonly maxContextTokens: number = DEFAULT_MAX_WINDOW_TOKENS,
   ) {}
 
   async complete(request: LlmRequest): Promise<LlmText> {
@@ -58,10 +73,23 @@ export class OllamaProvider implements LlmProvider {
     let res = await this.post({ ...body, think: false }, timeoutMs);
     if (res.status === 400) {
       const detail = await res.text();
-      if (!/think/i.test(detail)) {
+      const tooLong = tooLongFor(detail);
+      if (tooLong) {
+        // The server has just said how big the prompt really was, so ask for a
+        // window that holds it rather than losing the answer.
+        const wider = windowForTokens(tooLong.needed, { max: this.maxContextTokens });
+        if (wider <= tooLong.available) {
+          throw new LlmError(
+            'bad-response',
+            `This request needs about ${tooLong.needed} tokens, more than ${this.model} is allowed here (${tooLong.available}). Raise the context window under Settings, or ask a shorter question.`,
+          );
+        }
+        res = await this.post({ ...body, think: false, options: { ...body.options, num_ctx: wider } }, timeoutMs);
+      } else if (/think/i.test(detail)) {
+        res = await this.post(body, timeoutMs);
+      } else {
         throw new LlmError('bad-response', `Ollama rejected the request: ${detail.slice(0, 160)}`);
       }
-      res = await this.post(body, timeoutMs);
     }
     if (res.status === 404) {
       throw new LlmError(

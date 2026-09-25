@@ -1,4 +1,6 @@
 export * from './types.js';
+export * from './window.js';
+export * from './trim.js';
 export * from './guard.js';
 export * from './facts.js';
 export * from './prompts.js';

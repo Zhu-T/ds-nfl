@@ -8,6 +8,7 @@
  */
 
 import type { ChatTurn, LlmRequest } from './types.js';
+import { windowForParts } from './window.js';
 
 export const EXPLAIN_LINEUP_SYSTEM = `You explain a fantasy football lineup recommendation to the manager of the team. A separate optimizer has already chosen the lineup; that decision is final and is not yours to revisit.
 
@@ -65,11 +66,14 @@ export function leagueChatRequest(
   contextText: string,
   history: readonly ChatTurn[],
   question: string,
+  /** The largest window to ask a local model for; see window.ts. */
+  maxContextTokens?: number,
 ): LlmRequest {
   const system = leagueChatSystem(teamName, contextText);
-  // Ollama cuts long prompts off silently unless asked for a bigger window:
-  // about three characters per token, plus room for the answer.
-  const chars = system.length + question.length + history.reduce((total, turn) => total + turn.content.length, 0);
-  const contextTokens = Math.min(32_768, Math.max(8_192, Math.ceil((Math.ceil(chars / 3) + 2_000) / 4_096) * 4_096));
+  // A local model refuses a prompt bigger than the window asked for, so the
+  // window is sized from the prompt; see window.ts for why it errs upward.
+  const contextTokens = windowForParts([system, question, ...history.map((turn) => turn.content)], {
+    ...(maxContextTokens !== undefined ? { max: maxContextTokens } : {}),
+  });
   return { system, user: question, history, cacheSystem: true, contextTokens };
 }

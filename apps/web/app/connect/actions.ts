@@ -15,7 +15,7 @@ import {
   writeStore,
 } from '@ds-nfl/adapters';
 import { DEFAULT_OLLAMA_URL, LlmError, listOllamaModels, verifyClaudeKey } from '@ds-nfl/llm';
-import { DEFAULT_OLLAMA_MODEL } from '@/lib/ai';
+import { DEFAULT_OLLAMA_MODEL, contextTokensFor } from '@/lib/ai';
 
 export interface ConnectResult {
   readonly ok: boolean;
@@ -194,6 +194,10 @@ export async function saveAiSettings(
     const judgment = pickedJudgment && pickedJudgment !== model ? pickedJudgment : null;
     const pickedChat = String(form.get('ollamaChatModel') ?? '').trim();
     const chat = pickedChat && pickedChat !== model ? pickedChat : null;
+    const contextTokens = contextTokensFor({
+      provider: 'ollama',
+      ollamaContextTokens: Number(form.get('ollamaContextTokens')),
+    });
     try {
       const installed = await listOllamaModels(url);
       for (const wanted of [model, ...(judgment ? [judgment] : []), ...(chat ? [chat] : [])]) {
@@ -235,6 +239,7 @@ export async function saveAiSettings(
         ollamaModel: model,
         ...(judgment ? { ollamaJudgmentModel: judgment } : {}),
         ...(chat ? { ollamaChatModel: chat } : {}),
+        ollamaContextTokens: contextTokens,
         ...(searchKey ? { ollamaApiKey: searchKey } : {}),
       },
     });

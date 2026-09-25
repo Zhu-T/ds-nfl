@@ -168,6 +168,7 @@ export default async function ConnectPage() {
           ollamaModel={ai.ollamaModel}
           ollamaJudgmentModel={ai.ollamaJudgmentModel}
           ollamaChatModel={ai.ollamaChatModel}
+          ollamaContextTokens={ai.ollamaContextTokens}
           ollamaSearchKeySet={ai.ollamaSearchKeySet}
           installedModels={ollama.models}
           ollamaReachable={ollama.reachable}
