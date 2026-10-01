@@ -187,17 +187,17 @@ export default async function LineupPage() {
             {pts(currentPoints)} projected now · {pts(optimal.projectedPoints)} after
           </p>
         </div>
-        <ApplyButton
-          disabled={isSample || diff.alreadyOptimal}
-          week={league.week}
-          leagueKey={leagueKey}
-          {...(isSample
-            ? { disabledReason: 'Connect a league first — this is the sample roster.' }
-            : diff.alreadyOptimal
-              ? { disabledReason: 'Nothing to change.' }
-              : {})}
-          label={isFuture ? `Apply for week ${league.week}` : 'Apply all changes'}
-        />
+        {/* No button when there is nothing to apply: a greyed-out one beside
+            "already optimal" is a control that can never be used. */}
+        {!diff.alreadyOptimal && (
+          <ApplyButton
+            disabled={isSample}
+            week={league.week}
+            leagueKey={leagueKey}
+            {...(isSample ? { disabledReason: 'Connect a league first — this is the sample roster.' } : {})}
+            label={isFuture ? `Apply for week ${league.week}` : 'Apply all changes'}
+          />
+        )}
       </section>
 
       {!isSample && (

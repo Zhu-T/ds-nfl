@@ -280,6 +280,28 @@ describe('optimizeLineup', () => {
     expect(diff.slotsChanged).toBe(0);
   });
 
+  it('calls a lineup optimal when the same starters would only change slot labels', () => {
+    // A receiver in FLEX and a receiver in WR, each eligible for both: the
+    // optimizer may list them the other way round, which scores the same and is
+    // not a change to make. Offering it showed "Apply all changes" on a lineup
+    // with nothing to apply.
+    const rs = settings({ WR: 1, FLEX: 1 });
+    const a = { ...player('Wilson', 'WR', 10.9), eligibleSlots: ['WR', 'FLEX'] as LineupSlot[] };
+    const b = { ...player('Samuel', 'WR', 9), eligibleSlots: ['WR', 'FLEX'] as LineupSlot[] };
+    const optimal = optimizeLineup([a, b], rs);
+    // As the platform has it: the two the other way round.
+    const current: SlotAssignment[] = [
+      { slot: 'WR', slotIndex: 0, player: b },
+      { slot: 'FLEX', slotIndex: 1, player: a },
+    ];
+    const diff = diffLineup(current, optimal);
+
+    expect(diff.alreadyOptimal).toBe(true);
+    expect(diff.moves).toEqual([]);
+    expect(diff.slotsChanged).toBe(0);
+    expect(diff.pointsGained).toBe(0);
+  });
+
   it('does not start a player projected below zero', () => {
     const rs = settings({ QB: 1 });
     const solution = optimizeLineup([player('Turnover Machine', 'QB', -3)], rs);

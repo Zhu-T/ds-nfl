@@ -212,12 +212,20 @@ export function diffLineup(
     if (from) moves.push({ player: p, from, to: 'BENCH' });
   }
 
+  const currentPoints = current.reduce((s, a) => s + (a.player?.projectedPoints ?? 0), 0);
+
+  // Nobody joins the lineup and nobody leaves it: the same players start, for
+  // the same points, in differently labelled slots. A receiver in FLEX and a
+  // receiver in WR swapping places is not a change worth making, and offering
+  // it put "Apply all changes" beside a lineup that had nothing to apply.
+  const sameStarters = moves.length > 0 && moves.every((m) => m.to !== 'BENCH' && m.from !== 'BENCH');
+  if (sameStarters) return { moves: [], slotsChanged: 0, pointsGained: 0, alreadyOptimal: true };
+
   // A change is a starter moving into a slot of a different type. Comparing slot
   // by slot counted two running backs listed in the other order as 2 changes,
   // so the nav badge showed "2" beside a lineup the page called optimal.
   const slotsChanged = moves.filter((m) => m.to !== 'BENCH').length;
 
-  const currentPoints = current.reduce((s, a) => s + (a.player?.projectedPoints ?? 0), 0);
   return {
     moves,
     slotsChanged,
