@@ -43,6 +43,14 @@ export type WhatIfRow =
       readonly give: string;
       readonly get: string;
       readonly owner: string;
+      /**
+       * What each side of the trade projects this week, totalled. A model asked
+       * about a two-for-one adds the two projections itself and states the sum,
+       * which is a number the app never wrote and the guard then withholds. So
+       * the app writes it.
+       */
+      readonly givePoints: number;
+      readonly getPoints: number;
       /** Your best lineup this week, and across the weeks. */
       readonly mine: number;
       readonly mineAhead: number;
@@ -69,7 +77,11 @@ function line(r: WhatIfRow, through: string): string {
       return `- Drop ${r.name} (${r.position}, yours): costs ${n(r.thisWeek)} this week and ${n(r.ahead)} ${through}.`;
     case 'trade': {
       const accept = r.theirs <= 0 ? ', so they have little reason to accept' : '';
-      return `- Trade ${r.give} for ${r.get} (${r.owner}): your best lineup ${signed(r.mine)} this week and ${signed(r.mineAhead)} ${through}; theirs ${signed(r.theirs)} this week${accept}.`;
+      // Two things learned from watching a local model answer these: it adds
+      // the projections up and states the sum, so the app writes the totals
+      // rather than leaving the model to invent a number the guard withholds;
+      // and it reads a bare "theirs" as some other team's, so both are named.
+      return `- Trade ${r.give} (${n(r.givePoints)} projected this week between them) for ${r.get} (${n(r.getPoints)}), with ${r.owner}: your best lineup ${signed(r.mine)} this week and ${signed(r.mineAhead)} ${through}; ${r.owner}'s best lineup ${signed(r.theirs)} this week${accept}.`;
     }
   }
 }
@@ -78,7 +90,7 @@ function line(r: WhatIfRow, through: string): string {
 export function whatIfBlock(rows: readonly WhatIfRow[], through: string): string {
   if (rows.length === 0) return '';
   return [
-    `What the app computed for this question, with the same math as the Waivers page: your best lineup with the move minus without it, this week and from this week ${through}. Reason from these numbers; do not total lineups yourself.`,
+    `What the app computed for this question, with the same math as the Waivers page: your best lineup with the move minus without it, this week and from this week ${through}. Reason from these numbers; do not total lineups yourself. Subtracting one projection from another does not give the value of a move — only the players who would actually start count — so quote the lineup changes below rather than working one out.`,
     ...rows.map((r) => line(r, through)),
   ].join('\n');
 }

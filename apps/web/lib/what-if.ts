@@ -12,6 +12,13 @@ import { evaluatePlayer, tradeWhatIf } from './league-data';
 /** A question about a move rather than about a player. */
 const MOVE = /\b(add|adding|pick(ing)? ?up|claim|grab|stream|drop|dropping|cut|release|trade|trading|swap|deal|offer|worth|keep|should i)\b/i;
 const TRADE = /\b(trade|trading|swap|deal|offer)\b/i;
+/**
+ * Managers write trades as "my guy for their guy" without ever saying trade,
+ * which read as a question about nobody and was answered with "the brief does
+ * not list them". It counts as a trade only once the players named turn out to
+ * be on both sides, which is checked below.
+ */
+const FOR = /\bfor\b/i;
 /** Most players one question works out moves for: each takes a few ESPN reads. */
 const MOST = 3;
 
@@ -24,7 +31,7 @@ export async function whatIfsFor(
   question: string,
   list: PlayerList | null,
 ): Promise<{ readonly block: string; readonly names: readonly string[] }> {
-  if (!list || !MOVE.test(question)) return { block: '', names: [] };
+  if (!list || !(MOVE.test(question) || FOR.test(question))) return { block: '', names: [] };
   const named = lookUpPlayers(question, list.players, { includeMine: true, namesOnly: true });
   if (named.length === 0) return { block: '', names: [] };
 
@@ -32,12 +39,28 @@ export async function whatIfsFor(
   let span = '';
   const mine = named.filter((p) => p.ownerKind === 'mine');
   const theirs = named.filter((p) => p.ownerKind === 'team');
-  if (TRADE.test(question) && mine[0] && theirs[0]) {
-    const res = await tradeWhatIf(key, week, mine[0].id, theirs[0].id);
+  // Named on both sides: a trade, whether or not the word was used.
+  if ((TRADE.test(question) || FOR.test(question)) && mine[0] && theirs[0]) {
+    const res = await tradeWhatIf(
+      key,
+      week,
+      mine.slice(0, MOST).map((p) => p.id),
+      theirs.slice(0, MOST).map((p) => p.id),
+    );
     if (res.state === 'ok' && res.data) {
       const t = res.data;
       span = through(t.weeks);
-      rows.push({ kind: 'trade', give: t.give, get: t.get, owner: t.owner, mine: t.mine.byWeek[0] ?? 0, mineAhead: t.mine.total, theirs: t.theirs });
+      rows.push({
+        kind: 'trade',
+        give: t.give,
+        get: t.get,
+        givePoints: t.givePoints,
+        getPoints: t.getPoints,
+        owner: t.owner,
+        mine: t.mine.byWeek[0] ?? 0,
+        mineAhead: t.mine.total,
+        theirs: t.theirs,
+      });
     }
   }
 

@@ -8,7 +8,7 @@
  */
 
 import type { ChatTurn, LlmRequest } from './types.js';
-import { windowForParts } from './window.js';
+import { THINKING_RESERVE_TOKENS, windowForParts } from './window.js';
 
 export const EXPLAIN_LINEUP_SYSTEM = `You explain a fantasy football lineup recommendation to the manager of the team. A separate optimizer has already chosen the lineup; that decision is final and is not yours to revisit.
 
@@ -53,9 +53,11 @@ export function pitchTradeRequest(facts: string): LlmRequest {
 export function leagueChatSystem(teamName: string, contextText: string): string {
   return `You are the assistant for one fantasy football league, talking with the manager of ${teamName}. Everything you know about the league is in the context below, plus any players the app looked up in the league's full player list for a question, which are listed before that question. When the app has worked out what adding, dropping, or trading a player would do, it lists that too: reason from those numbers, which use the same math as the app's pages, and do not total lineups yourself. It was computed by the app's optimizer from ESPN's data and news feed.
 
+Answer the manager's latest message. Earlier turns are background: any players or moves worked out for them belong to those questions, not this one, and the rows sent with this message are the ones to reason from. Two questions about trades are two different trades unless the manager says otherwise.
+
 The optimizer's recommendations are final. You explain them, answer questions about the context, and point out anything in the news that the projections may not reflect. You do not make lineup, waiver, or trade decisions of your own, and you cannot change anything on ESPN; if asked to, say what the app recommends and that the manager makes the move.
 
-If the context does not answer a question, say so rather than guessing. Do not add general fantasy advice or predictions about later weeks; the context covers this week only. Every number you write must appear in the context or in the manager's own messages. Keep answers to a few sentences unless asked for more. Write plain text: no markdown, bold, headings, or emojis. A short list with hyphens is fine.
+If the context does not answer a question, say so rather than guessing. Do not add general fantasy advice or predictions about later weeks; the context covers this week only. Every number you write must appear in the context or in the manager's own messages. Do not add, subtract, or average numbers to make a new one: if the total you want is not written down, say that the app did not work it out. Keep answers to a few sentences unless asked for more. Write plain text: no markdown, bold, headings, or emojis. A short list with hyphens is fine.
 
 Context:
 ${contextText}`;
@@ -72,8 +74,13 @@ export function leagueChatRequest(
   const system = leagueChatSystem(teamName, contextText);
   // A local model refuses a prompt bigger than the window asked for, so the
   // window is sized from the prompt; see window.ts for why it errs upward.
+  // Thinking is generated into the same window as the answer, so the room kept
+  // back is the larger one; see window.ts.
   const contextTokens = windowForParts([system, question, ...history.map((turn) => turn.content)], {
+    reserve: THINKING_RESERVE_TOKENS,
     ...(maxContextTokens !== undefined ? { max: maxContextTokens } : {}),
   });
-  return { system, user: question, history, cacheSystem: true, contextTokens };
+  // The chat is where a pickup or a trade is worth thinking through, and the
+  // page shows the thinking under the answer.
+  return { system, user: question, history, cacheSystem: true, contextTokens, think: true };
 }

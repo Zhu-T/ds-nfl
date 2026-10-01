@@ -15,6 +15,12 @@
 export const CHARS_PER_TOKEN = 2.5;
 /** Room kept for the model's own answer. */
 export const DEFAULT_RESERVE_TOKENS = 1_024;
+/**
+ * Room kept when a reasoning model is asked to think first. Its thinking is
+ * generated into the same window as the answer, and a chain of a thousand
+ * tokens is ordinary, so a window sized for prose alone truncates the answer.
+ */
+export const THINKING_RESERVE_TOKENS = 4_096;
 /** Ollama allocates in blocks; asking for a round number avoids surprises. */
 export const WINDOW_STEP = 4_096;
 /** Below this a window buys nothing: the prompt alone is bigger. */

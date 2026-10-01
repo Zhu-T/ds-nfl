@@ -68,9 +68,11 @@ export class OllamaProvider implements LlmProvider {
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     // Reasoning models such as DeepSeek-R1 think by default: slow, and pointless
-    // for a few sentences of prose. Ask them not to. A model with no thinking
-    // mode may reject the flag, so retry once without it.
-    let res = await this.post({ ...body, think: false }, timeoutMs);
+    // for a few sentences of prose, so it is asked for only where it earns the
+    // wait (see LlmRequest.think). A model with no thinking mode may reject the
+    // flag, so retry once without it.
+    const think = request.think ?? false;
+    let res = await this.post({ ...body, think }, timeoutMs);
     if (res.status === 400) {
       const detail = await res.text();
       const tooLong = tooLongFor(detail);
@@ -84,7 +86,7 @@ export class OllamaProvider implements LlmProvider {
             `This request needs about ${tooLong.needed} tokens, more than ${this.model} is allowed here (${tooLong.available}). Raise the context window under Settings, or ask a shorter question.`,
           );
         }
-        res = await this.post({ ...body, think: false, options: { ...body.options, num_ctx: wider } }, timeoutMs);
+        res = await this.post({ ...body, think, options: { ...body.options, num_ctx: wider } }, timeoutMs);
       } else if (/think/i.test(detail)) {
         res = await this.post(body, timeoutMs);
       } else {

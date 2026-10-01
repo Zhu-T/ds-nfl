@@ -883,6 +883,9 @@ export function playerWebNews(
 export interface TradeWhatIf {
   readonly give: string;
   readonly get: string;
+  /** What each side projects this week, totalled; see packages/llm/src/what-if.ts. */
+  readonly givePoints: number;
+  readonly getPoints: number;
   readonly owner: string;
   readonly weeks: readonly number[];
   readonly mine: HorizonValue;
@@ -893,35 +896,54 @@ export interface TradeWhatIf {
  * Trading `giveId` (yours) for `getId` (another team's), priced as the Trades
  * page prices it. Null when the players are not where the trade needs them.
  */
+/**
+ * A trade the manager named, priced on both sides — any number of players each
+ * way, since "Montgomery and McMillan for Williams" is as ordinary a question
+ * as a one-for-one. Everyone coming in must be on one other team; a trade has
+ * two sides.
+ */
 export function tradeWhatIf(
   key: string | null | undefined,
   requestedWeek: number | null,
-  giveId: string,
-  getId: string,
+  giveIds: readonly string[],
+  getIds: readonly string[],
 ): Promise<Loaded<TradeWhatIf | null>> {
   return load(key, async (reader, ref, league, connKey) => {
+    if (giveIds.length === 0 || getIds.length === 0) return null;
     const { week, findings, market, matchups, formOn } = await weekFor(reader, ref, league, connKey, requestedWeek);
     const [teams, all] = await Promise.all([reader.getTeams(ref), reader.getAllRosters(ref, week)]);
     const myId = String(ref.teamId);
     const mineRoster = all.get(myId) ?? [];
-    const theirEntry = [...all].find(([teamId, ps]) => String(teamId) !== myId && ps.some((p) => p.platformPlayerId === getId));
-    if (!theirEntry || !mineRoster.some((p) => p.platformPlayerId === giveId)) return null;
+    const theirEntry = [...all].find(
+      ([teamId, ps]) => String(teamId) !== myId && getIds.every((id) => ps.some((p) => p.platformPlayerId === id)),
+    );
+    const allMine = giveIds.every((id) => mineRoster.some((p) => p.platformPlayerId === id));
+    if (!theirEntry || !allMine) return null;
     const [theirId, theirRoster] = theirEntry;
     const mine = applyNewsFindings(priced(mineRoster, market, matchups, formOn), findings);
     const theirs = priced(theirRoster, market, matchups, formOn);
-    const give = mine.find((p) => p.gsisId === giveId)!;
-    const get = theirs.find((p) => p.gsisId === getId)!;
+    const give = mine.filter((p) => giveIds.includes(p.gsisId));
+    const get = theirs.filter((p) => getIds.includes(p.gsisId));
     const horizon = await horizonFor(reader, ref, league, week, [...mineRoster, ...theirRoster]);
     const settings = league.rosterSettings;
     return {
-      give: give.name,
-      get: get.name,
+      give: names(give),
+      get: names(get),
+      givePoints: round1(give.reduce((sum, p) => sum + p.projectedPoints, 0)),
+      getPoints: round1(get.reduce((sum, p) => sum + p.projectedPoints, 0)),
       owner: teams.find((t) => String(t.teamId) === String(theirId))?.name ?? `Team ${theirId}`,
       weeks: horizon.weeks,
-      mine: swapValue(mine, giveId, get, horizon, settings),
-      theirs: swapValue(theirs, getId, give, { weeks: [week], outlooks: horizon.outlooks }, settings).total,
+      mine: tradeValue(mine, giveIds, get, horizon, settings),
+      theirs: tradeValue(theirs, getIds, give, { weeks: [week], outlooks: horizon.outlooks }, settings).total,
     };
   });
+}
+
+/** "Kyren Williams", or "David Montgomery and Tetairoa McMillan". */
+function names(players: readonly OptimizerPlayer[]): string {
+  return players.length <= 1
+    ? (players[0]?.name ?? '')
+    : `${players.slice(0, -1).map((p) => p.name).join(', ')} and ${players[players.length - 1]!.name}`;
 }
 
 // ------------------------------------------------------------------- trades --

@@ -14,7 +14,17 @@ const rows: WhatIfRow[] = [
     bestTrade: { give: 'Kenny Gainwell', myGain: 2.1, theirGain: 0.4 },
   },
   { kind: 'drop', name: 'Bo Nix', position: 'QB', thisWeek: 0, ahead: 0.3 },
-  { kind: 'trade', give: 'Davante Adams', get: 'Chase Brown', owner: 'Likely to Pierce Brown People', mine: 1.5, mineAhead: 4.2, theirs: -2.3 },
+  {
+    kind: 'trade',
+    give: 'Davante Adams and Michael Wilson',
+    get: 'Chase Brown',
+    givePoints: 20.2,
+    getPoints: 13.2,
+    owner: 'Likely to Pierce Brown People',
+    mine: 1.5,
+    mineAhead: 4.2,
+    theirs: -2.3,
+  },
 ];
 
 describe('whatIfBlock', () => {
@@ -23,7 +33,7 @@ describe('whatIfBlock', () => {
       '- Add KC Concepcion (WR, on waivers, needs a claim): +0.0 this week, +1.2 through week 5; the player your lineups would miss least is Trevor Lawrence, who costs 0.0 through week 5.',
       '- Get Chase Brown (RB, from Likely to Pierce Brown People): +2.1 this week and +6.3 through week 5 if they were yours; the best one-for-one trade the app finds gives Kenny Gainwell (your lineup +2.1, theirs +0.4 this week).',
       '- Drop Bo Nix (QB, yours): costs 0.0 this week and 0.3 through week 5.',
-      '- Trade Davante Adams for Chase Brown (Likely to Pierce Brown People): your best lineup +1.5 this week and +4.2 through week 5; theirs -2.3 this week, so they have little reason to accept.',
+      "- Trade Davante Adams and Michael Wilson (20.2 projected this week between them) for Chase Brown (13.2), with Likely to Pierce Brown People: your best lineup +1.5 this week and +4.2 through week 5; Likely to Pierce Brown People's best lineup -2.3 this week, so they have little reason to accept.",
     ]);
   });
 

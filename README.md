@@ -497,12 +497,21 @@ One page per connected league (**League AI** in the sidebar) with two parts:
   players it names ("should I drop Bo Nix to add KC Concepcion?", "should I trade Kenny
   Gainwell for Chase Brown?"), the app computes each move with the Waivers page's math:
   what it adds this week and through the coming weeks, the player your lineups would miss
-  least, and for a named trade, what it does to both teams. The model reasons from those
-  rows rather than adding up lineups, and the number check accepts their figures.
+  least, and for a named trade, what it does to both teams. A trade can name any number of
+  players each way, and "Montgomery and McMillan for Williams" counts as one without the
+  word trade: it is a trade once the players named turn out to be on both sides. The row
+  also gives what each side projects, totalled, because a model asked about a two-for-one
+  adds the two projections itself and states a sum the app never wrote, which the number
+  check then withholds. The model reasons from those rows rather than adding up lineups,
+  and the number check accepts their figures.
 - **Reasoning.** A separate model can be chosen for the chat under the Ollama settings,
   such as deepseek-r1:14b, which reasons; its reasoning is shown under each answer on
   request. It is for questioning the answer, and is not checked: only the answer goes
-  through the number check.
+  through the number check. Thinking is asked for on chat requests alone — it costs time
+  that a one-line explanation does not repay — and the window reserves room for it, since
+  a model's thinking is generated into the same window as its answer. The fine-tuned
+  model (`ds-nfl-lora`) was trained without reasoning and produces none, so the chat needs
+  a model that reasons for any to appear.
 - **A chat** scoped to that league. Earlier turns go back with each question, and the
   conversation is saved on this computer, one file per league: `data/conversations/` in
   development, and a `conversations` folder beside the desktop app's credentials.

@@ -30,6 +30,29 @@ describe('tooLongFor', () => {
   });
 });
 
+describe('OllamaProvider and thinking', () => {
+  it('asks for thinking only when the request wants it, and keeps what comes back', async () => {
+    const thought = () =>
+      new Response(JSON.stringify({ message: { content: 'Trade it.', thinking: 'He is worth 2.1 more.' } }), { status: 200 });
+    // Two replies: a Response body can only be read once.
+    const { bodies, fetchImpl } = stub([thought(), thought()]);
+    const provider = new OllamaProvider('deepseek-r1:14b', undefined, fetchImpl);
+
+    const out = await provider.complete({ system: 'S', user: 'Q', think: true });
+    expect(bodies[0].think).toBe(true);
+    expect(out.reasoning).toBe('He is worth 2.1 more.');
+
+    await provider.complete({ system: 'S', user: 'Q' });
+    expect(bodies[1].think).toBe(false);
+  });
+
+  it('keeps the thinking flag when it has to ask again for a bigger window', async () => {
+    const { bodies, fetchImpl } = stub([refused(), ok()]);
+    await new OllamaProvider('deepseek-r1:14b', undefined, fetchImpl).complete({ system: 'S', user: 'Q', think: true });
+    expect(bodies.map((b: any) => b.think)).toEqual([true, true]);
+  });
+});
+
 describe('OllamaProvider and the context window', () => {
   it('asks again with a window that holds the prompt, rather than losing the answer', async () => {
     const { bodies, fetchImpl } = stub([refused(), ok()]);

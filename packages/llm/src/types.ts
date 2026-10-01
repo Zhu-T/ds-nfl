@@ -36,6 +36,13 @@ export interface LlmRequest {
    * longer than its window, which defaults small. Claude ignores it.
    */
   readonly contextTokens?: number;
+  /**
+   * Ask a reasoning model to think before answering, and keep that thinking.
+   * Off for the short explanations, where it only costs time; on for the chat,
+   * where a trade or a pickup is worth working through and the reasoning is
+   * shown under the answer. A model without a thinking mode ignores it.
+   */
+  readonly think?: boolean;
   readonly timeoutMs?: number;
 }
 
